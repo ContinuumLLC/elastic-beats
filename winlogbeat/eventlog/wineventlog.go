@@ -108,8 +108,19 @@ func (l *winEventLog) Name() string {
 	return l.channelName
 }
 
-func (l *winEventLog) Open(_ uint64) error {
+func (l *winEventLog) Open(state checkpoint.EventLogState) error {
 	var err error
+	var bookmark win.EvtHandle
+
+	if len(state.Bookmark) > 0 {
+		bookmark, err = win.CreateBookmarkFromXML(state.Bookmark)
+	} else {
+		bookmark, err = win.CreateBookmarkFromRecordID(l.channelName, state.RecordNumber)
+	}
+	if err != nil {
+		return err
+	}
+	defer win.Close(bookmark)
 
 	flags := win.EvtSubscribeToFutureEvents
 	if l.config.SimpleQuery.IgnoreOlder > 0 {
