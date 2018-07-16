@@ -136,12 +136,12 @@ func (l *winEventLog) Open(state checkpoint.EventLogState) error {
 
 	debugf("%s using subscription query=%s", l.logPrefix, l.query)
 	subscriptionHandle, err := win.Subscribe(
-		0,       // Session - nil for localhost
-		l.evt,   //signalEvent
-		"",      // Channel - empty b/c channel is in the query
-		l.query, // Query - nil means all events
-		0,       // Bookmark - for resuming from a specific event
-		flags,   //win.EvtSubscribeStartAfterBookmark to work with bookmarks
+		0,        // Session - nil for localhost
+		l.evt,    //signalEvent
+		"",       // Channel - empty b/c channel is in the query
+		l.query,  // Query - nil means all events
+		bookmark, // Bookmark - for resuming from a specific event
+		flags,    //win.EvtSubscribeStartAfterBookmark to work with bookmarks
 	)
 	if err != nil {
 		return err
