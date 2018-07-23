@@ -98,9 +98,8 @@ type winEventLog struct {
 	outputBuf *sys.ByteBuffer                                // Buffer for receiving XML
 	cache     *messageFilesCache                             // Cached mapping of source name to event message file handles.
 
-	logPrefix     string               // String to prefix on log messages.
-	eventMetadata common.EventMetadata // Field and tags to add to each event.
-	evt           windows.Handle
+	logPrefix string // String to prefix on log messages.
+	evt       windows.Handle
 }
 
 // Name returns the name of the event log (i.e. Application, Security, etc.).
@@ -110,17 +109,6 @@ func (l *winEventLog) Name() string {
 
 func (l *winEventLog) Open(state checkpoint.EventLogState) error {
 	var err error
-	var bookmark win.EvtHandle
-
-	if len(state.Bookmark) > 0 {
-		bookmark, err = win.CreateBookmarkFromXML(state.Bookmark)
-	} else {
-		bookmark, err = win.CreateBookmarkFromRecordID(l.channelName, state.RecordNumber)
-	}
-	if err != nil {
-		return err
-	}
-	defer win.Close(bookmark)
 
 	flags := win.EvtSubscribeToFutureEvents
 	if l.config.SimpleQuery.IgnoreOlder > 0 {
@@ -136,12 +124,12 @@ func (l *winEventLog) Open(state checkpoint.EventLogState) error {
 
 	debugf("%s using subscription query=%s", l.logPrefix, l.query)
 	subscriptionHandle, err := win.Subscribe(
-		0,        // Session - nil for localhost
-		l.evt,    //signalEvent
-		"",       // Channel - empty b/c channel is in the query
-		l.query,  // Query - nil means all events
-		bookmark, // Bookmark - for resuming from a specific event
-		flags,    //win.EvtSubscribeStartAfterBookmark to work with bookmarks
+		0,       // Session - nil for localhost
+		l.evt,   //signalEvent
+		"",      // Channel - empty b/c channel is in the query
+		l.query, // Query - nil means all events
+		0,       // Bookmark - for resuming from a specific event
+		flags,   // Bookmark - for resuming from a specific event
 	)
 	if err != nil {
 		return err
