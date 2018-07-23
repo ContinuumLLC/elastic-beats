@@ -25,15 +25,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/joeshaw/multierror"
-	"github.com/pkg/errors"
-	"golang.org/x/sys/windows"
-
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/winlogbeat/checkpoint"
 	"github.com/elastic/beats/winlogbeat/sys"
 	win "github.com/elastic/beats/winlogbeat/sys/wineventlog"
+	"github.com/joeshaw/multierror"
+	"github.com/pkg/errors"
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -195,6 +194,7 @@ func (l *winEventLog) Read() ([]Record, error) {
 func (l *winEventLog) Close() error {
 	debugf("%s Closing handle", l.logPrefix)
 	windows.SetEvent(l.evt)
+	//windows.CloseHandle(l.evt)
 	return win.Close(l.subscription)
 }
 
