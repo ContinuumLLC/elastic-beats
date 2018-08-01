@@ -21,12 +21,15 @@ import (
 	"go.uber.org/zap"
 )
 
+// LogOption configures a Logger.
+type LogOption = zap.Option
+
 // Logger logs messages to the configured output.
 type Logger struct {
 	sugar *zap.SugaredLogger
 }
 
-func newLogger(rootLogger *zap.Logger, selector string, options ...zap.Option) *Logger {
+func newLogger(rootLogger *zap.Logger, selector string, options ...LogOption) *Logger {
 	log := rootLogger.
 		WithOptions(zap.AddCallerSkip(1)).
 		WithOptions(options...).
@@ -39,7 +42,7 @@ func newLogger(rootLogger *zap.Logger, selector string, options ...zap.Option) *
 // no-op Logger. This is because the logp package needs to be initialized first.
 // Instead create new Logger instance that your object reuses. Or if you need to
 // log from a static context then you may use logp.L().Infow(), for example.
-func NewLogger(selector string, options ...zap.Option) *Logger {
+func NewLogger(selector string, options ...LogOption) *Logger {
 	return newLogger(loadLogger().rootLogger, selector, options...)
 }
 
