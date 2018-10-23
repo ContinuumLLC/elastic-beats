@@ -71,7 +71,7 @@ func _ReadEventLog(eventLog Handle, readFlags EventLogReadFlag, recordOffset uin
 	if r1 == 0 {
 		if e1 != 0 {
 			// if an error is apeared, wait one second
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Millisecond)
 			err = error(e1)
 		} else {
 			err = syscall.EINVAL
