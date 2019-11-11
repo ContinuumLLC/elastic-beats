@@ -275,7 +275,9 @@ func newWinEventLog(options *common.Config) (EventLog, error) {
 	if err := readConfig(options, &c, winEventLogConfigKeys); err != nil {
 		return nil, err
 	}
-
+	if len(c.SimpleQuery.Provider) != 0 && c.SimpleQuery.Provider[0] == "" {
+		c.SimpleQuery.Provider = nil
+	}
 	query, err := win.Query{
 		Log:         c.Name,
 		IgnoreOlder: c.SimpleQuery.IgnoreOlder,
