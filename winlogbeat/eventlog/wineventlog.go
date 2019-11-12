@@ -275,7 +275,11 @@ func newWinEventLog(options *common.Config) (EventLog, error) {
 	if err := readConfig(options, &c, winEventLogConfigKeys); err != nil {
 		return nil, err
 	}
-
+	// cover case when we have Provider as empty string in config
+	// so we want to query to all events with Level and EventID
+	if len(c.SimpleQuery.Provider) != 0 && c.SimpleQuery.Provider[0] == "" {
+		c.SimpleQuery.Provider = nil
+	}
 	query, err := win.Query{
 		Log:         c.Name,
 		IgnoreOlder: c.SimpleQuery.IgnoreOlder,
