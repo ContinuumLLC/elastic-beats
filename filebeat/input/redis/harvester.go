@@ -23,14 +23,13 @@ import (
 	"time"
 
 	rd "github.com/garyburd/redigo/redis"
-	"github.com/satori/go.uuid"
+	"github.com/gofrs/uuid"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
 
-	"github.com/elastic/beats/filebeat/harvester"
-	"github.com/elastic/beats/filebeat/util"
+	"github.com/elastic/beats/v7/filebeat/harvester"
 )
 
 // Harvester contains all redis harvester data
@@ -61,12 +60,17 @@ type log struct {
 }
 
 // NewHarvester creates a new harvester with the given connection
-func NewHarvester(conn rd.Conn) *Harvester {
+func NewHarvester(conn rd.Conn) (*Harvester, error) {
+	id, err := uuid.NewV4()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Harvester{
-		id:   uuid.NewV4(),
+		id:   id,
 		done: make(chan struct{}),
 		conn: conn,
-	}
+	}, nil
 }
 
 // Run starts a new redis harvester
@@ -128,8 +132,7 @@ func (h *Harvester) Run() error {
 			log.args = args[2:]
 		}
 
-		data := util.NewData()
-		subEvent := common.MapStr{
+		slowlogEntry := common.MapStr{
 			"id":  log.id,
 			"cmd": log.cmd,
 			"key": log.key,
@@ -139,22 +142,21 @@ func (h *Harvester) Run() error {
 		}
 
 		if log.args != nil {
-			subEvent["args"] = log.args
-
+			slowlogEntry["args"] = log.args
 		}
 
-		data.Event = beat.Event{
+		h.forwarder.Send(beat.Event{
 			Timestamp: time.Unix(log.timestamp, 0).UTC(),
 			Fields: common.MapStr{
 				"message": strings.Join(args, " "),
 				"redis": common.MapStr{
-					"slowlog": subEvent,
+					"slowlog": slowlogEntry,
 				},
-				"read_timestamp": common.Time(time.Now().UTC()),
+				"event": common.MapStr{
+					"created": time.Now(),
+				},
 			},
-		}
-
-		h.forwarder.Send(data)
+		})
 	}
 	return nil
 }

@@ -22,17 +22,16 @@ package fileset
 import (
 	"encoding/json"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/elastic/beats/libbeat/outputs/elasticsearch"
-	"github.com/elastic/beats/libbeat/outputs/elasticsearch/estest"
+	"github.com/elastic/beats/v7/libbeat/esleg/eslegclient"
+	"github.com/elastic/beats/v7/libbeat/esleg/eslegtest"
 )
 
 func TestLoadPipeline(t *testing.T) {
-	client := estest.GetTestingElasticsearch(t)
+	client := getTestingElasticsearch(t)
 	if !hasIngest(client) {
 		t.Skip("Skip tests because ingest is missing in this elasticsearch version: ", client.GetVersion())
 	}
@@ -70,7 +69,7 @@ func TestLoadPipeline(t *testing.T) {
 	checkUploadedPipeline(t, client, "describe pipeline 2")
 }
 
-func checkUploadedPipeline(t *testing.T, client *elasticsearch.Client, expectedDescription string) {
+func checkUploadedPipeline(t *testing.T, client *eslegclient.Connection, expectedDescription string) {
 	status, response, err := client.Request("GET", "/_ingest/pipeline/my-pipeline-id", "", nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, status)
@@ -83,7 +82,7 @@ func checkUploadedPipeline(t *testing.T, client *elasticsearch.Client, expectedD
 }
 
 func TestSetupNginx(t *testing.T) {
-	client := estest.GetTestingElasticsearch(t)
+	client := getTestingElasticsearch(t)
 	if !hasIngest(client) {
 		t.Skip("Skip tests because ingest is missing in this elasticsearch version: ", client.GetVersion())
 	}
@@ -115,7 +114,7 @@ func TestSetupNginx(t *testing.T) {
 }
 
 func TestAvailableProcessors(t *testing.T) {
-	client := estest.GetTestingElasticsearch(t)
+	client := getTestingElasticsearch(t)
 	if !hasIngest(client) {
 		t.Skip("Skip tests because ingest is missing in this elasticsearch version: ", client.GetVersion())
 	}
@@ -140,13 +139,122 @@ func TestAvailableProcessors(t *testing.T) {
 	assert.Contains(t, err.Error(), "ingest-hello")
 }
 
-func hasIngest(client *elasticsearch.Client) bool {
+func hasIngest(client *eslegclient.Connection) bool {
 	v := client.GetVersion()
-	majorVersion := string(v[0])
-	version, err := strconv.Atoi(majorVersion)
-	if err != nil {
-		return true
+	return v.Major >= 5
+}
+
+func hasIngestPipelineProcessor(client *eslegclient.Connection) bool {
+	v := client.GetVersion()
+	return v.Major > 6 || (v.Major == 6 && v.Minor >= 5)
+}
+
+func TestLoadMultiplePipelines(t *testing.T) {
+	client := getTestingElasticsearch(t)
+	if !hasIngest(client) {
+		t.Skip("Skip tests because ingest is missing in this elasticsearch version: ", client.GetVersion())
 	}
 
-	return version >= 5
+	if !hasIngestPipelineProcessor(client) {
+		t.Skip("Skip tests because ingest is missing the pipeline processor: ", client.GetVersion())
+	}
+
+	client.Request("DELETE", "/_ingest/pipeline/filebeat-6.6.0-foo-multi-pipeline", "", nil, nil)
+	client.Request("DELETE", "/_ingest/pipeline/filebeat-6.6.0-foo-multi-json_logs", "", nil, nil)
+	client.Request("DELETE", "/_ingest/pipeline/filebeat-6.6.0-foo-multi-plain_logs", "", nil, nil)
+
+	modulesPath, err := filepath.Abs("../_meta/test/module")
+	assert.NoError(t, err)
+
+	enabled := true
+	disabled := false
+	filesetConfigs := map[string]*FilesetConfig{
+		"multi":    &FilesetConfig{Enabled: &enabled},
+		"multibad": &FilesetConfig{Enabled: &disabled},
+	}
+	configs := []*ModuleConfig{
+		&ModuleConfig{"foo", &enabled, filesetConfigs},
+	}
+
+	reg, err := newModuleRegistry(modulesPath, configs, nil, "6.6.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = reg.LoadPipelines(client, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status, _, _ := client.Request("GET", "/_ingest/pipeline/filebeat-6.6.0-foo-multi-pipeline", "", nil, nil)
+	assert.Equal(t, 200, status)
+	status, _, _ = client.Request("GET", "/_ingest/pipeline/filebeat-6.6.0-foo-multi-json_logs", "", nil, nil)
+	assert.Equal(t, 200, status)
+	status, _, _ = client.Request("GET", "/_ingest/pipeline/filebeat-6.6.0-foo-multi-plain_logs", "", nil, nil)
+	assert.Equal(t, 200, status)
+}
+
+func TestLoadMultiplePipelinesWithRollback(t *testing.T) {
+	client := getTestingElasticsearch(t)
+	if !hasIngest(client) {
+		t.Skip("Skip tests because ingest is missing in this elasticsearch version: ", client.GetVersion())
+	}
+
+	if !hasIngestPipelineProcessor(client) {
+		t.Skip("Skip tests because ingest is missing the pipeline processor: ", client.GetVersion())
+	}
+
+	client.Request("DELETE", "/_ingest/pipeline/filebeat-6.6.0-foo-multibad-pipeline", "", nil, nil)
+	client.Request("DELETE", "/_ingest/pipeline/filebeat-6.6.0-foo-multibad-json_logs", "", nil, nil)
+	client.Request("DELETE", "/_ingest/pipeline/filebeat-6.6.0-foo-multibad-plain_logs_bad", "", nil, nil)
+
+	modulesPath, err := filepath.Abs("../_meta/test/module")
+	assert.NoError(t, err)
+
+	enabled := true
+	disabled := false
+	filesetConfigs := map[string]*FilesetConfig{
+		"multi":    &FilesetConfig{Enabled: &disabled},
+		"multibad": &FilesetConfig{Enabled: &enabled},
+	}
+	configs := []*ModuleConfig{
+		&ModuleConfig{"foo", &enabled, filesetConfigs},
+	}
+
+	reg, err := newModuleRegistry(modulesPath, configs, nil, "6.6.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = reg.LoadPipelines(client, false)
+	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "invalid_processor")
+
+	status, _, _ := client.Request("GET", "/_ingest/pipeline/filebeat-6.6.0-foo-multibad-pipeline", "", nil, nil)
+	assert.Equal(t, 404, status)
+	status, _, _ = client.Request("GET", "/_ingest/pipeline/filebeat-6.6.0-foo-multibad-json_logs", "", nil, nil)
+	assert.Equal(t, 404, status)
+	status, _, _ = client.Request("GET", "/_ingest/pipeline/filebeat-6.6.0-foo-multibad-plain_logs_bad", "", nil, nil)
+	assert.Equal(t, 404, status)
+}
+
+func getTestingElasticsearch(t eslegtest.TestLogger) *eslegclient.Connection {
+	conn, err := eslegclient.NewConnection(eslegclient.ConnectionSettings{
+		URL:     eslegtest.GetURL(),
+		Timeout: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+		panic(err) // panic in case TestLogger did not stop test
+	}
+
+	conn.Encoder = eslegclient.NewJSONEncoder(nil, false)
+
+	err = conn.Connect()
+	if err != nil {
+		t.Fatal(err)
+		panic(err) // panic in case TestLogger did not stop test
+	}
+
+	return conn
 }

@@ -18,34 +18,26 @@
 package channel
 
 import (
-	"github.com/elastic/beats/filebeat/util"
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/atomic"
+	"sync"
+
+	"github.com/elastic/beats/v7/libbeat/beat"
 )
 
 type subOutlet struct {
-	isOpen atomic.Bool
-	done   chan struct{}
-	ch     chan *util.Data
-	res    chan bool
-}
-
-// ConnectTo creates a new Connector, combining a beat.Pipeline with an outlet Factory.
-func ConnectTo(pipeline beat.Pipeline, factory Factory) Connector {
-	return func(cfg *common.Config, m *common.MapStrPointer) (Outleter, error) {
-		return factory(pipeline, cfg, m)
-	}
+	done      chan struct{}
+	ch        chan beat.Event
+	res       chan bool
+	mutex     sync.Mutex
+	closeOnce sync.Once
 }
 
 // SubOutlet create a sub-outlet, which can be closed individually, without closing the
 // underlying outlet.
 func SubOutlet(out Outleter) Outleter {
 	s := &subOutlet{
-		isOpen: atomic.MakeBool(true),
-		done:   make(chan struct{}),
-		ch:     make(chan *util.Data),
-		res:    make(chan bool, 1),
+		done: make(chan struct{}),
+		ch:   make(chan beat.Event),
+		res:  make(chan bool, 1),
 	}
 
 	go func() {
@@ -58,24 +50,37 @@ func SubOutlet(out Outleter) Outleter {
 }
 
 func (o *subOutlet) Close() error {
-	isOpen := o.isOpen.Swap(false)
-	if isOpen {
+	o.closeOnce.Do(func() {
+		// Signal OnEvent() to terminate
 		close(o.done)
-	}
+		// This mutex prevents the event channel to be closed if OnEvent is
+		// still running.
+		o.mutex.Lock()
+		defer o.mutex.Unlock()
+		close(o.ch)
+	})
 	return nil
 }
 
-func (o *subOutlet) OnEvent(d *util.Data) bool {
-	if !o.isOpen.Load() {
+func (o *subOutlet) Done() <-chan struct{} {
+	return o.done
+}
+
+func (o *subOutlet) OnEvent(event beat.Event) bool {
+
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	select {
+	case <-o.done:
 		return false
+	default:
 	}
 
 	select {
 	case <-o.done:
-		close(o.ch)
 		return false
 
-	case o.ch <- d:
+	case o.ch <- event:
 		select {
 		case <-o.done:
 
@@ -92,8 +97,6 @@ func (o *subOutlet) OnEvent(d *util.Data) bool {
 			//  Once all messages are in the publisher pipeline, in correct order,
 			//  it depends on registrar/publisher pipeline if state is finally updated
 			//  in the registrar.
-
-			close(o.ch)
 			return true
 
 		case ret := <-o.res:
@@ -106,8 +109,12 @@ func (o *subOutlet) OnEvent(d *util.Data) bool {
 func CloseOnSignal(outlet Outleter, sig <-chan struct{}) Outleter {
 	if sig != nil {
 		go func() {
-			<-sig
-			outlet.Close()
+			select {
+			case <-outlet.Done():
+				return
+			case <-sig:
+				outlet.Close()
+			}
 		}()
 	}
 	return outlet

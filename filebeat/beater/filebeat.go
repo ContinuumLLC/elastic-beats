@@ -25,25 +25,29 @@ import (
 	"github.com/joeshaw/multierror"
 	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/autodiscover"
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/cfgfile"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/cfgwarn"
-	"github.com/elastic/beats/libbeat/kibana"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/monitoring"
-	"github.com/elastic/beats/libbeat/outputs/elasticsearch"
-
-	fbautodiscover "github.com/elastic/beats/filebeat/autodiscover"
-	"github.com/elastic/beats/filebeat/channel"
-	cfg "github.com/elastic/beats/filebeat/config"
-	"github.com/elastic/beats/filebeat/crawler"
-	"github.com/elastic/beats/filebeat/fileset"
-	"github.com/elastic/beats/filebeat/registrar"
+	fbautodiscover "github.com/elastic/beats/v7/filebeat/autodiscover"
+	"github.com/elastic/beats/v7/filebeat/channel"
+	cfg "github.com/elastic/beats/v7/filebeat/config"
+	"github.com/elastic/beats/v7/filebeat/fileset"
+	_ "github.com/elastic/beats/v7/filebeat/include"
+	"github.com/elastic/beats/v7/filebeat/input"
+	"github.com/elastic/beats/v7/filebeat/registrar"
+	"github.com/elastic/beats/v7/libbeat/autodiscover"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/cfgfile"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/common/cfgwarn"
+	"github.com/elastic/beats/v7/libbeat/common/reload"
+	"github.com/elastic/beats/v7/libbeat/esleg/eslegclient"
+	"github.com/elastic/beats/v7/libbeat/kibana"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/management"
+	"github.com/elastic/beats/v7/libbeat/monitoring"
+	"github.com/elastic/beats/v7/libbeat/outputs/elasticsearch"
 
 	// Add filebeat level processors
-	_ "github.com/elastic/beats/filebeat/processor/add_kubernetes_metadata"
+	_ "github.com/elastic/beats/v7/filebeat/processor/add_kubernetes_metadata"
+	_ "github.com/elastic/beats/v7/libbeat/processors/decode_csv_fields"
 )
 
 const pipelinesWarning = "Filebeat is unable to load the Ingest Node pipelines for the configured" +
@@ -69,25 +73,15 @@ func New(b *beat.Beat, rawConfig *common.Config) (beat.Beater, error) {
 		return nil, fmt.Errorf("Error reading config file: %v", err)
 	}
 
-	err := cfgwarn.CheckRemoved5xSettings(rawConfig, "spool_size", "publish_async", "idle_timeout")
-	if err != nil {
+	if err := cfgwarn.CheckRemoved6xSettings(
+		rawConfig,
+		"prospectors",
+		"config.prospectors",
+		"registry_file",
+		"registry_file_permissions",
+		"registry_flush",
+	); err != nil {
 		return nil, err
-	}
-
-	if len(config.Prospectors) > 0 {
-		cfgwarn.Deprecate("7.0.0", "prospectors are deprecated, Use `inputs` instead.")
-		if len(config.Inputs) > 0 {
-			return nil, fmt.Errorf("prospectors and inputs used in the configuration file, define only inputs not both")
-		}
-		config.Inputs = config.Prospectors
-	}
-
-	if config.ConfigProspector != nil {
-		cfgwarn.Deprecate("7.0.0", "config.prospectors are deprecated, Use `config.inputs` instead.")
-		if config.ConfigInput != nil {
-			return nil, fmt.Errorf("config.prospectors and config.inputs used in the configuration file, define only config.inputs not both")
-		}
-		config.ConfigInput = config.ConfigProspector
 	}
 
 	moduleRegistry, err := fileset.NewModuleRegistry(config.Modules, b.Info.Version, true)
@@ -116,7 +110,7 @@ func New(b *beat.Beat, rawConfig *common.Config) (beat.Beater, error) {
 		haveEnabledInputs = true
 	}
 
-	if !config.ConfigInput.Enabled() && !config.ConfigModules.Enabled() && !haveEnabledInputs && config.Autodiscover == nil {
+	if !config.ConfigInput.Enabled() && !config.ConfigModules.Enabled() && !haveEnabledInputs && config.Autodiscover == nil && !b.ConfigManager.Enabled() {
 		if !b.InSetupCmd {
 			return nil, errors.New("no modules or inputs enabled and configuration reloading disabled. What files do you want me to watch?")
 		}
@@ -152,20 +146,30 @@ func New(b *beat.Beat, rawConfig *common.Config) (beat.Beater, error) {
 	return fb, nil
 }
 
+// setupPipelineLoaderCallback sets the callback function for loading pipelines during setup.
 func (fb *Filebeat) setupPipelineLoaderCallback(b *beat.Beat) error {
-	if !fb.moduleRegistry.Empty() {
-		overwritePipelines := fb.config.OverwritePipelines
-		if b.InSetupCmd {
-			overwritePipelines = true
+	if b.Config.Output.Name() != "elasticsearch" {
+		logp.Warn(pipelinesWarning)
+		return nil
+	}
+
+	overwritePipelines := true
+	b.OverwritePipelinesCallback = func(esConfig *common.Config) error {
+		esClient, err := eslegclient.NewConnectedClient(esConfig)
+		if err != nil {
+			return err
 		}
 
-		b.OverwritePipelinesCallback = func(esConfig *common.Config) error {
-			esClient, err := elasticsearch.NewConnectedClient(esConfig)
-			if err != nil {
-				return err
-			}
-			return fb.moduleRegistry.LoadPipelines(esClient, overwritePipelines)
+		// When running the subcommand setup, configuration from modules.d directories
+		// have to be loaded using cfg.Reloader. Otherwise those configurations are skipped.
+		pipelineLoaderFactory := newPipelineLoaderFactory(b.Config.Output.Config())
+		modulesFactory := fileset.NewSetupFactory(b.Info.Version, pipelineLoaderFactory)
+		if fb.config.ConfigModules.Enabled() {
+			modulesLoader := cfgfile.NewReloader(b.Publisher, fb.config.ConfigModules)
+			modulesLoader.Load(modulesFactory)
 		}
+
+		return fb.moduleRegistry.LoadPipelines(esClient, overwritePipelines)
 	}
 	return nil
 }
@@ -185,12 +189,12 @@ func (fb *Filebeat) loadModulesPipelines(b *beat.Beat) error {
 
 	// register pipeline loading to happen every time a new ES connection is
 	// established
-	callback := func(esClient *elasticsearch.Client) error {
+	callback := func(esClient *eslegclient.Connection) error {
 		return fb.moduleRegistry.LoadPipelines(esClient, overwritePipelines)
 	}
-	elasticsearch.RegisterConnectCallback(callback)
+	_, err := elasticsearch.RegisterConnectCallback(callback)
 
-	return nil
+	return err
 }
 
 func (fb *Filebeat) loadModulesML(b *beat.Beat, kibanaConfig *common.Config) error {
@@ -205,7 +209,7 @@ func (fb *Filebeat) loadModulesML(b *beat.Beat, kibanaConfig *common.Config) err
 	}
 
 	esConfig := b.Config.Output.Config()
-	esClient, err := elasticsearch.NewConnectedClient(esConfig)
+	esClient, err := eslegclient.NewConnectedClient(esConfig)
 	if err != nil {
 		return errors.Errorf("Error creating Elasticsearch client: %v", err)
 	}
@@ -231,12 +235,7 @@ func (fb *Filebeat) loadModulesML(b *beat.Beat, kibanaConfig *common.Config) err
 		return errors.Errorf("Error creating Kibana client: %v", err)
 	}
 
-	kibanaVersion, err := common.NewVersion(kibanaClient.GetVersion())
-	if err != nil {
-		return errors.Errorf("Error checking Kibana version: %v", err)
-	}
-
-	if err := setupMLBasedOnVersion(fb.moduleRegistry, esClient, kibanaClient, kibanaVersion); err != nil {
+	if err := setupMLBasedOnVersion(fb.moduleRegistry, esClient, kibanaClient); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -262,7 +261,7 @@ func (fb *Filebeat) loadModulesML(b *beat.Beat, kibanaConfig *common.Config) err
 				continue
 			}
 
-			if err := setupMLBasedOnVersion(set, esClient, kibanaClient, kibanaVersion); err != nil {
+			if err := setupMLBasedOnVersion(set, esClient, kibanaClient); err != nil {
 				errs = append(errs, err)
 			}
 
@@ -272,18 +271,16 @@ func (fb *Filebeat) loadModulesML(b *beat.Beat, kibanaConfig *common.Config) err
 	return errs.Err()
 }
 
-func setupMLBasedOnVersion(reg *fileset.ModuleRegistry, esClient *elasticsearch.Client, kibanaClient *kibana.Client, kibanaVersion *common.Version) error {
-	if isElasticsearchLoads(kibanaVersion) {
+func setupMLBasedOnVersion(reg *fileset.ModuleRegistry, esClient *eslegclient.Connection, kibanaClient *kibana.Client) error {
+	if isElasticsearchLoads(kibanaClient.GetVersion()) {
 		return reg.LoadML(esClient)
 	}
 	return reg.SetupML(esClient, kibanaClient)
 }
 
-func isElasticsearchLoads(kibanaVersion *common.Version) bool {
-	if kibanaVersion.Major < 6 || kibanaVersion.Major == 6 && kibanaVersion.Minor < 1 {
-		return true
-	}
-	return false
+func isElasticsearchLoads(kibanaVersion common.Version) bool {
+	return kibanaVersion.Major < 6 ||
+		(kibanaVersion.Major == 6 && kibanaVersion.Minor < 1)
 }
 
 // Run allows the beater to be run as a beat.
@@ -310,7 +307,7 @@ func (fb *Filebeat) Run(b *beat.Beat) error {
 	finishedLogger := newFinishedLogger(wgEvents)
 
 	// Setup registrar to persist state
-	registrar, err := registrar.New(config.RegistryFile, config.RegistryFilePermissions, config.RegistryFlush, finishedLogger)
+	registrar, err := registrar.New(config.Registry, finishedLogger)
 	if err != nil {
 		logp.Err("Could not init registrar: %v", err)
 		return err
@@ -328,12 +325,26 @@ func (fb *Filebeat) Run(b *beat.Beat) error {
 	}
 
 	outDone := make(chan struct{}) // outDone closes down all active pipeline connections
-	crawler, err := crawler.New(
-		channel.NewOutletFactory(outDone, wgEvents).Create,
-		config.Inputs,
+	pipelineConnector := channel.NewOutletFactory(outDone, wgEvents, b.Info).Create
+
+	// Create a ES connection factory for dynamic modules pipeline loading
+	var pipelineLoaderFactory fileset.PipelineLoaderFactory
+	if b.Config.Output.Name() == "elasticsearch" {
+		pipelineLoaderFactory = newPipelineLoaderFactory(b.Config.Output.Config())
+	} else {
+		logp.Warn(pipelinesWarning)
+	}
+
+	inputLoader := input.NewRunnerFactory(pipelineConnector, registrar, fb.done)
+	moduleLoader := fileset.NewFactory(pipelineConnector,
+		registrar,
 		b.Info.Version,
+		pipelineLoaderFactory,
+		config.OverwritePipelines,
 		fb.done,
-		*once)
+	)
+
+	crawler, err := newCrawler(inputLoader, moduleLoader, pipelineConnector, config.Inputs, fb.done, *once)
 	if err != nil {
 		logp.Err("Could not init crawler: %v", err)
 		return err
@@ -363,19 +374,11 @@ func (fb *Filebeat) Run(b *beat.Beat) error {
 	// Wait for all events to be processed or timeout
 	defer waitEvents.Wait()
 
-	// Create a ES connection factory for dynamic modules pipeline loading
-	var pipelineLoaderFactory fileset.PipelineLoaderFactory
-	if b.Config.Output.Name() == "elasticsearch" {
-		pipelineLoaderFactory = newPipelineLoaderFactory(b.Config.Output.Config())
-	} else {
-		logp.Warn(pipelinesWarning)
-	}
-
 	if config.OverwritePipelines {
 		logp.Debug("modules", "Existing Ingest pipelines will be updated")
 	}
 
-	err = crawler.Start(b.Publisher, registrar, config.ConfigInput, config.ConfigModules, pipelineLoaderFactory, config.OverwritePipelines)
+	err = crawler.Start(b.Publisher, registrar, config.ConfigInput, config.ConfigModules)
 	if err != nil {
 		crawler.Stop()
 		return err
@@ -391,9 +394,16 @@ func (fb *Filebeat) Run(b *beat.Beat) error {
 		waitFinished.Add(runOnce)
 	}
 
+	// Register reloadable list of inputs and modules
+	inputs := cfgfile.NewRunnerList(management.DebugK, inputLoader, b.Publisher)
+	reload.Register.MustRegisterList("filebeat.inputs", inputs)
+
+	modules := cfgfile.NewRunnerList(management.DebugK, moduleLoader, b.Publisher)
+	reload.Register.MustRegisterList("filebeat.modules", modules)
+
 	var adiscover *autodiscover.Autodiscover
 	if fb.config.Autodiscover != nil {
-		adapter := fbautodiscover.NewAutodiscoverAdapter(crawler.InputsFactory, crawler.ModulesFactory)
+		adapter := fbautodiscover.NewAutodiscoverAdapter(inputLoader, moduleLoader)
 		adiscover, err = autodiscover.NewAutodiscover("filebeat", b.Publisher, adapter, config.Autodiscover)
 		if err != nil {
 			return err
@@ -405,10 +415,12 @@ func (fb *Filebeat) Run(b *beat.Beat) error {
 	waitFinished.AddChan(fb.done)
 	waitFinished.Wait()
 
-	// Stop autodiscover -> Stop crawler -> stop inputs -> stop harvesters
+	// Stop reloadable lists, autodiscover -> Stop crawler -> stop inputs -> stop harvesters
 	// Note: waiting for crawlers to stop here in order to install wgEvents.Wait
 	//       after all events have been enqueued for publishing. Otherwise wgEvents.Wait
 	//       or publisher might panic due to concurrent updates.
+	inputs.Stop()
+	modules.Stop()
 	adiscover.Stop()
 	crawler.Stop()
 
@@ -443,7 +455,7 @@ func (fb *Filebeat) Stop() {
 // Create a new pipeline loader (es client) factory
 func newPipelineLoaderFactory(esConfig *common.Config) fileset.PipelineLoaderFactory {
 	pipelineLoaderFactory := func() (fileset.PipelineLoader, error) {
-		esClient, err := elasticsearch.NewConnectedClient(esConfig)
+		esClient, err := eslegclient.NewConnectedClient(esConfig)
 		if err != nil {
 			return nil, errors.Wrap(err, "Error creating Elasticsearch client")
 		}

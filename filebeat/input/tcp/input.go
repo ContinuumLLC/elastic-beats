@@ -18,19 +18,18 @@
 package tcp
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
-	"github.com/elastic/beats/filebeat/channel"
-	"github.com/elastic/beats/filebeat/harvester"
-	"github.com/elastic/beats/filebeat/input"
-	"github.com/elastic/beats/filebeat/inputsource"
-	"github.com/elastic/beats/filebeat/inputsource/tcp"
-	"github.com/elastic/beats/filebeat/util"
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/cfgwarn"
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/filebeat/channel"
+	"github.com/elastic/beats/v7/filebeat/harvester"
+	"github.com/elastic/beats/v7/filebeat/input"
+	"github.com/elastic/beats/v7/filebeat/inputsource"
+	"github.com/elastic/beats/v7/filebeat/inputsource/tcp"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 func init() {
@@ -53,12 +52,15 @@ type Input struct {
 // NewInput creates a new TCP input
 func NewInput(
 	cfg *common.Config,
-	outlet channel.Connector,
+	connector channel.Connector,
 	context input.Context,
 ) (input.Input, error) {
-	cfgwarn.Experimental("TCP input type is used")
 
-	out, err := outlet(cfg, context.DynamicFields)
+	out, err := connector.ConnectWith(cfg, beat.ClientConfig{
+		Processing: beat.ProcessingConfig{
+			DynamicFields: context.DynamicFields,
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +78,14 @@ func NewInput(
 		forwarder.Send(event)
 	}
 
-	server, err := tcp.New(&config.Config, cb)
+	splitFunc := tcp.SplitFunc([]byte(config.LineDelimiter))
+	if splitFunc == nil {
+		return nil, fmt.Errorf("unable to create splitFunc for delimiter %s", config.LineDelimiter)
+	}
+
+	factory := tcp.SplitHandlerFactory(cb, splitFunc)
+
+	server, err := tcp.New(&config.Config, factory)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +95,7 @@ func NewInput(
 		started: false,
 		outlet:  out,
 		config:  &config,
-		log:     logp.NewLogger("tcp input").With(config.Config.Host),
+		log:     logp.NewLogger("tcp input").With("address", config.Config.Host),
 	}, nil
 }
 
@@ -121,14 +130,16 @@ func (p *Input) Wait() {
 	p.Stop()
 }
 
-func createEvent(raw []byte, metadata inputsource.NetworkMetadata) *util.Data {
-	data := util.NewData()
-	data.Event = beat.Event{
+func createEvent(raw []byte, metadata inputsource.NetworkMetadata) beat.Event {
+	return beat.Event{
 		Timestamp: time.Now(),
 		Fields: common.MapStr{
 			"message": string(raw),
-			"source":  metadata.RemoteAddr.String(),
+			"log": common.MapStr{
+				"source": common.MapStr{
+					"address": metadata.RemoteAddr.String(),
+				},
+			},
 		},
 	}
-	return data
 }

@@ -21,9 +21,9 @@ import (
 	"errors"
 	"sync"
 
-	uuid "github.com/satori/go.uuid"
+	"github.com/gofrs/uuid"
 
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 // Registry struct manages (start / stop) a list of harvesters

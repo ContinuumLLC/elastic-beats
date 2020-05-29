@@ -4,12 +4,16 @@ This file is generated! See scripts/docs_collector.py
 
 [[filebeat-module-logstash]]
 :modulename: logstash
+:has-dashboards: true
+
 == Logstash module
 
 The +{modulename}+ module parse logstash regular logs and the slow log, it will support the plain text format
 and the JSON format (--log.format json). The default is the plain text format.
 
 include::../include/what-happens.asciidoc[]
+
+include::../include/gs-link.asciidoc[]
 
 The +{modulename}+ module has two filesets:
 
@@ -18,7 +22,7 @@ The +{modulename}+ module has two filesets:
 
 
 For the `slowlog` fileset, make sure to configure the
-{logstashdoc}/logging.html#_slowlog[Logstash slowlog option].
+{logstash-ref}/logging.html#_slowlog[Logstash slowlog option].
 
 [float]
 === Compatibility
@@ -26,19 +30,6 @@ For the `slowlog` fileset, make sure to configure the
 The Logstash `log` fileset was tested with logs from Logstash 5.6 and 6.0.
 
 The Logstash `slowlog` fileset was tested with logs from Logstash 5.6 and 6.0
-
-include::../include/running-modules.asciidoc[]
-
-[float]
-===  Example dashboards
-
-This module comes with two sample dashboards.
-
-[role="screenshot"]
-image::./images/kibana-logstash-log.png[]
-
-[role="screenshot"]
-image::./images/kibana-logstash-slowlog.png[]
 
 include::../include/configuring-intro.asciidoc[]
 
@@ -51,18 +42,18 @@ file to override the default paths for Logstash logs and set the format to json
   log:
     enabled: true
     var.paths: ["/path/to/log/logstash.log*"]
-    format: json
+    var.format: json
   slowlog:
     enabled: true
     var.paths: ["/path/to/log/logstash-slowlog.log*"]
-    format: json
+    var.format: json
 -----
 
 To specify the same settings at the command line, you use:
 
 ["source","sh",subs="attributes"]
 -----
-./{beatname_lc} --modules {modulename} -M "logstash.log.var.paths=[/path/to/log/logstash/logstash-server.log*]" -M "logstash.slowlog.var.paths=[/path/to/log/logstash/logstash-slowlog.log*]"
+-M "logstash.log.var.paths=[/path/to/log/logstash/logstash-server.log*]" -M "logstash.slowlog.var.paths=[/path/to/log/logstash/logstash-slowlog.log*]"
 -----
 
 
@@ -91,6 +82,25 @@ include::../include/var-paths.asciidoc[]
 
 The configured Logstash log format. Possible values are: `json` or `plain`. The
 default is `plain`.
+
+include::../include/timezone-support.asciidoc[]
+
+[float]
+===  Example dashboards
+
+This module comes with two sample dashboards.
+
+[role="screenshot"]
+image::./images/kibana-logstash-log.png[]
+
+[role="screenshot"]
+image::./images/kibana-logstash-slowlog.png[]
+
+:has-dashboards!:
+
+:fileset_ex!:
+
+:modulename!:
 
 
 [float]

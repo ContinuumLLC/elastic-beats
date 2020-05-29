@@ -21,16 +21,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/elastic/beats/filebeat/channel"
-	"github.com/elastic/beats/filebeat/harvester"
-	"github.com/elastic/beats/filebeat/input"
-	"github.com/elastic/beats/filebeat/inputsource"
-	"github.com/elastic/beats/filebeat/inputsource/udp"
-	"github.com/elastic/beats/filebeat/util"
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/cfgwarn"
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/filebeat/channel"
+	"github.com/elastic/beats/v7/filebeat/harvester"
+	"github.com/elastic/beats/v7/filebeat/input"
+	"github.com/elastic/beats/v7/filebeat/inputsource"
+	"github.com/elastic/beats/v7/filebeat/inputsource/udp"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 func init() {
@@ -54,9 +52,12 @@ func NewInput(
 	outlet channel.Connector,
 	context input.Context,
 ) (input.Input, error) {
-	cfgwarn.Experimental("UDP input type is used")
 
-	out, err := outlet(cfg, context.DynamicFields)
+	out, err := outlet.ConnectWith(cfg, beat.ClientConfig{
+		Processing: beat.ProcessingConfig{
+			DynamicFields: context.DynamicFields,
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -68,18 +69,20 @@ func NewInput(
 
 	forwarder := harvester.NewForwarder(out)
 	callback := func(data []byte, metadata inputsource.NetworkMetadata) {
-		e := util.NewData()
-		e.Event = beat.Event{
+		forwarder.Send(beat.Event{
 			Timestamp: time.Now(),
 			Meta: common.MapStr{
 				"truncated": metadata.Truncated,
 			},
 			Fields: common.MapStr{
 				"message": string(data),
-				"source":  metadata.RemoteAddr.String(),
+				"log": common.MapStr{
+					"source": common.MapStr{
+						"address": metadata.RemoteAddr.String(),
+					},
+				},
 			},
-		}
-		forwarder.Send(e)
+		})
 	}
 
 	udp := udp.New(&config.Config, callback)

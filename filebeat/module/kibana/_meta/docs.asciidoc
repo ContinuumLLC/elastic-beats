@@ -1,4 +1,5 @@
 :modulename: kibana
+:has-dashboards: false
 
 == Kibana module
 
@@ -8,22 +9,27 @@ This is the Kibana module.
 
 include::../include/what-happens.asciidoc[]
 
+include::../include/gs-link.asciidoc[]
+
 [float]
 === Compatibility
 
 The Kibana modules is compatible with Kibana 6.3 and newer.
 
-include::../include/running-modules.asciidoc[]
-
-
 include::../include/configuring-intro.asciidoc[]
 
-//set the fileset name used in the included example
+//set the fileset name used in the included file
 :fileset_ex: log
 
 include::../include/config-option-intro.asciidoc[]
 
 [float]
-==== `{fileset}` log fileset settings
+==== `log` fileset settings
 
 include::../include/var-paths.asciidoc[]
+
+:has-dashboards!:
+
+:fileset_ex!:
+
+:modulename!:

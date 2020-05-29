@@ -24,8 +24,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/elastic/beats/filebeat/inputsource"
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/dustin/go-humanize"
+
+	"github.com/elastic/beats/v7/filebeat/inputsource"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 // Name is the human readable name and identifier.
@@ -40,7 +42,7 @@ const windowErrBuffer = "A message sent on a datagram socket was larger than the
 type Server struct {
 	config   *Config
 	callback inputsource.NetworkFunc
-	Listener net.PacketConn
+	Listener *net.UDPConn
 	log      *logp.Logger
 	wg       sync.WaitGroup
 	done     chan struct{}
@@ -59,7 +61,20 @@ func New(config *Config, callback inputsource.NetworkFunc) *Server {
 // Start starts the UDP Server and listen to incoming events.
 func (u *Server) Start() error {
 	var err error
-	u.Listener, err = net.ListenPacket("udp", u.config.Host)
+	udpAdddr, err := net.ResolveUDPAddr("udp", u.config.Host)
+	if err != nil {
+		return err
+	}
+	u.Listener, err = net.ListenUDP("udp", udpAdddr)
+	if err != nil {
+		return err
+	}
+	socketSize := int(u.config.ReadBuffer) * humanize.KiByte
+	if socketSize != 0 {
+		if err := u.Listener.SetReadBuffer(int(u.config.ReadBuffer)); err != nil {
+			return err
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -96,7 +111,15 @@ func (u *Server) run() {
 				continue
 			}
 
-			u.log.Errorw("Error reading from the socket", "error", err)
+			// Closed network error string will never change in Go 1.X
+			// https://github.com/golang/go/issues/4373
+			opErr, ok := err.(*net.OpError)
+			if ok && strings.Contains(opErr.Err.Error(), "use of closed network connection") {
+				u.log.Info("Connection has been closed")
+				return
+			}
+
+			u.log.Errorf("Error reading from the socket %s", err)
 
 			// On Windows send the current buffer and mark it as truncated.
 			// The buffer will have content but length will return 0, addr will be nil.
@@ -115,8 +138,8 @@ func (u *Server) run() {
 // Stop stops the current udp server.
 func (u *Server) Stop() {
 	u.log.Info("Stopping UDP server")
-	u.Listener.Close()
 	close(u.done)
+	u.Listener.Close()
 	u.wg.Wait()
 	u.log.Info("UDP server stopped")
 }

@@ -22,13 +22,15 @@ import (
 
 	"github.com/dustin/go-humanize"
 
-	"github.com/elastic/beats/filebeat/harvester"
-	"github.com/elastic/beats/filebeat/inputsource/tcp"
+	"github.com/elastic/beats/v7/filebeat/harvester"
+	"github.com/elastic/beats/v7/filebeat/inputsource/tcp"
 )
 
 type config struct {
 	tcp.Config                `config:",inline"`
 	harvester.ForwarderConfig `config:",inline"`
+
+	LineDelimiter string `config:"line_delimiter" validate:"nonzero"`
 }
 
 var defaultConfig = config{
@@ -36,8 +38,8 @@ var defaultConfig = config{
 		Type: "tcp",
 	},
 	Config: tcp.Config{
-		LineDelimiter:  "\n",
 		Timeout:        time.Minute * 5,
 		MaxMessageSize: 20 * humanize.MiByte,
 	},
+	LineDelimiter: "\n",
 }

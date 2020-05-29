@@ -18,15 +18,18 @@
 package fileset
 
 import (
-	"github.com/elastic/beats/filebeat/channel"
-	input "github.com/elastic/beats/filebeat/prospector"
-	"github.com/elastic/beats/filebeat/registrar"
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/cfgfile"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/monitoring"
-	"github.com/elastic/beats/libbeat/outputs/elasticsearch"
+	"github.com/gofrs/uuid"
+
+	"github.com/elastic/beats/v7/filebeat/channel"
+	"github.com/elastic/beats/v7/filebeat/input"
+	"github.com/elastic/beats/v7/filebeat/registrar"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/cfgfile"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/esleg/eslegclient"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/monitoring"
+	"github.com/elastic/beats/v7/libbeat/outputs/elasticsearch"
 
 	"github.com/mitchellh/hashstructure"
 )
@@ -46,6 +49,7 @@ type Factory struct {
 	beatVersion           string
 	pipelineLoaderFactory PipelineLoaderFactory
 	overwritePipelines    bool
+	pipelineCallbackID    uuid.UUID
 	beatDone              chan struct{}
 }
 
@@ -55,6 +59,7 @@ type inputsRunner struct {
 	moduleRegistry        *ModuleRegistry
 	inputs                []*input.Runner
 	pipelineLoaderFactory PipelineLoaderFactory
+	pipelineCallbackID    uuid.UUID
 	overwritePipelines    bool
 }
 
@@ -67,6 +72,7 @@ func NewFactory(outlet channel.Factory, registrar *registrar.Registrar, beatVers
 		beatVersion:           beatVersion,
 		beatDone:              beatDone,
 		pipelineLoaderFactory: pipelineLoaderFactory,
+		pipelineCallbackID:    uuid.Nil,
 		overwritePipelines:    overwritePipelines,
 	}
 }
@@ -93,7 +99,7 @@ func (f *Factory) Create(p beat.Pipeline, c *common.Config, meta *common.MapStrP
 	}
 
 	inputs := make([]*input.Runner, len(pConfigs))
-	connector := channel.ConnectTo(p, f.outlet)
+	connector := f.outlet(p)
 	for i, pConfig := range pConfigs {
 		inputs[i], err = input.New(pConfig, connector, f.beatDone, f.registrar.GetStates(), meta)
 		if err != nil {
@@ -107,6 +113,7 @@ func (f *Factory) Create(p beat.Pipeline, c *common.Config, meta *common.MapStrP
 		moduleRegistry:        m,
 		inputs:                inputs,
 		pipelineLoaderFactory: f.pipelineLoaderFactory,
+		pipelineCallbackID:    f.pipelineCallbackID,
 		overwritePipelines:    f.overwritePipelines,
 	}, nil
 }
@@ -114,7 +121,12 @@ func (f *Factory) Create(p beat.Pipeline, c *common.Config, meta *common.MapStrP
 func (p *inputsRunner) Start() {
 	// Load pipelines
 	if p.pipelineLoaderFactory != nil {
-		// Load pipelines instantly and then setup a callback for reconnections:
+		// Attempt to load pipelines instantly when starting or after reload.
+		// Thus, if ES was not available previously, it could be loaded this time.
+		// If the function below fails, it means that ES is not available
+		// at the moment, so the pipeline loader cannot be created.
+		// Registering a callback regardless of the availability of ES
+		// makes it possible to try to load pipeline when ES becomes reachable.
 		pipelineLoader, err := p.pipelineLoaderFactory()
 		if err != nil {
 			logp.Err("Error loading pipeline: %s", err)
@@ -126,11 +138,14 @@ func (p *inputsRunner) Start() {
 			}
 		}
 
-		// Callback:
-		callback := func(esClient *elasticsearch.Client) error {
+		// Register callback to try to load pipelines when connecting to ES.
+		callback := func(esClient *eslegclient.Connection) error {
 			return p.moduleRegistry.LoadPipelines(esClient, p.overwritePipelines)
 		}
-		elasticsearch.RegisterConnectCallback(callback)
+		p.pipelineCallbackID, err = elasticsearch.RegisterConnectCallback(callback)
+		if err != nil {
+			logp.Err("Error registering connect callback for Elasticsearch to load pipelines: %v", err)
+		}
 	}
 
 	for _, input := range p.inputs {
@@ -143,6 +158,10 @@ func (p *inputsRunner) Start() {
 	}
 }
 func (p *inputsRunner) Stop() {
+	if p.pipelineCallbackID != uuid.Nil {
+		elasticsearch.DeregisterConnectCallback(p.pipelineCallbackID)
+	}
+
 	for _, input := range p.inputs {
 		input.Stop()
 	}

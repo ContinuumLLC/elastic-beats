@@ -71,6 +71,7 @@ type event struct {
 	nanosecond int
 	year       int
 	loc        *time.Location
+	sequence   int
 }
 
 // newEvent() return a new event.
@@ -84,6 +85,7 @@ func newEvent() *event {
 		minute:   -1,
 		second:   -1,
 		year:     time.Now().Year(),
+		sequence: -1,
 	}
 }
 
@@ -102,18 +104,20 @@ func (s *event) SetTimeZone(b []byte) {
 	}
 
 	// +00 +00:00 or +0000
+	// Use second value directly and don't use unecessary time.Duration.
+	// Time.FixedZone accepts number of seconds.
 	var h, m int
 	switch len(b[1:]) {
 	case 2:
-		h = int(time.Hour * time.Duration(bytesToInt(skipLeadZero(b[1:]))))
+		h = 3600 * bytesToInt(skipLeadZero(b[1:]))
 		s.loc = time.FixedZone("", d*h)
 	case 4:
-		h = int(time.Hour * time.Duration(bytesToInt(skipLeadZero(b[1:3]))))
-		m = int(time.Minute * time.Duration(bytesToInt(skipLeadZero(b[3:5]))))
+		h = 3600 * bytesToInt(skipLeadZero(b[1:3]))
+		m = 60 * bytesToInt(skipLeadZero(b[3:5]))
 		s.loc = time.FixedZone("", d*(h+m))
 	case 5:
-		h = int(time.Hour * time.Duration(bytesToInt(skipLeadZero(b[1:3]))))
-		m = int(time.Minute * time.Duration(bytesToInt(skipLeadZero(b[4:6]))))
+		h = 3600 * bytesToInt(skipLeadZero(b[1:3]))
+		m = 60 * bytesToInt(skipLeadZero(b[4:6]))
 		s.loc = time.FixedZone("", d*(h+m))
 	}
 }
@@ -214,7 +218,7 @@ func (s *event) Priority() int {
 
 // HasPriority returns if the priority was in original event.
 func (s *event) HasPriority() bool {
-	return s.priority > 0
+	return s.priority >= 0
 }
 
 // Severity returns the severity, will return -1 if priority is not set.
@@ -267,12 +271,23 @@ func (s *event) HasPid() bool {
 	return s.pid > 0
 }
 
+// SetSequence set the sequence number for this event.
+func (s *event) SetSequence(b []byte) {
+	s.sequence = bytesToInt(b)
+}
+
+// Sequence returns the sequence number of the event when defined,
+// otherwise return -1.
+func (s *event) Sequence() int {
+	return s.sequence
+}
+
 // SetNanoSecond sets the nanosecond.
 func (s *event) SetNanosecond(b []byte) {
 	// We assume that we receive a byte array representing a nanosecond, this might not be
 	// always the case, so we have to pad it.
-	if len(b) < 7 {
-		s.nanosecond = bytesToInt(skipLeadZero(b)) * int(math.Pow10((7 - len(b))))
+	if len(b) < 9 {
+		s.nanosecond = bytesToInt(skipLeadZero(b)) * int(math.Pow10((9 - len(b))))
 	} else {
 		s.nanosecond = bytesToInt(skipLeadZero(b))
 	}

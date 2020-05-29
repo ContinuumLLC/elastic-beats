@@ -4,6 +4,7 @@ This file is generated! See scripts/docs_collector.py
 
 [[filebeat-module-icinga]]
 :modulename: icinga
+:has-dashboards: true
 
 == Icinga module
 
@@ -12,6 +13,8 @@ https://www.icinga.com/products/icinga-2/[Icinga].
 
 include::../include/what-happens.asciidoc[]
 
+include::../include/gs-link.asciidoc[]
+
 [float]
 === Compatibility
 
@@ -19,16 +22,6 @@ The +{modulename}+ module was tested with Icinga >= 2.x on various Linux and Win
 systems.
 
 This module is not available for macOS.
-
-include::../include/running-modules.asciidoc[]
-
-[float]
-=== Example dashboard
-
-This module comes with sample dashboards. For example:
-
-[role="screenshot"]
-image::./images/kibana-icinga-main.png[]
 
 include::../include/configuring-intro.asciidoc[]
 
@@ -54,7 +47,7 @@ To specify the same settings at the command line, you use:
 
 ["source","sh",subs="attributes"]
 -----
-./{beatname_lc} --modules {modulename} -M "icinga.main.var.paths=[/path/to/log/icinga2/icinga2.log*]" -M "icinga.debug.var.paths=[/path/to/log/icinga2/debug.log*]" -M "icinga.startup.var.paths=[/path/to/log/icinga2/startup.log]"
+-M "icinga.main.var.paths=[/path/to/log/icinga2/icinga2.log*]" -M "icinga.debug.var.paths=[/path/to/log/icinga2/debug.log*]" -M "icinga.startup.var.paths=[/path/to/log/icinga2/startup.log]"
 -----
 
 
@@ -79,6 +72,20 @@ include::../include/var-paths.asciidoc[]
 ==== `startup` log fileset settings
 
 include::../include/var-paths.asciidoc[]
+
+[float]
+=== Example dashboard
+
+This module comes with sample dashboards. For example:
+
+[role="screenshot"]
+image::./images/kibana-icinga-main.png[]
+
+:has-dashboards!:
+
+:fileset_ex!:
+
+:modulename!:
 
 
 [float]

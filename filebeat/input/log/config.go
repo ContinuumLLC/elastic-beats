@@ -24,14 +24,15 @@ import (
 
 	"github.com/dustin/go-humanize"
 
-	cfg "github.com/elastic/beats/filebeat/config"
-	"github.com/elastic/beats/filebeat/harvester"
-	"github.com/elastic/beats/filebeat/input/file"
-	"github.com/elastic/beats/filebeat/reader/json"
-	"github.com/elastic/beats/filebeat/reader/multiline"
-	"github.com/elastic/beats/libbeat/common/cfgwarn"
-	"github.com/elastic/beats/libbeat/common/match"
-	"github.com/elastic/beats/libbeat/logp"
+	cfg "github.com/elastic/beats/v7/filebeat/config"
+	"github.com/elastic/beats/v7/filebeat/harvester"
+	"github.com/elastic/beats/v7/filebeat/input/file"
+	"github.com/elastic/beats/v7/libbeat/common/cfgwarn"
+	"github.com/elastic/beats/v7/libbeat/common/match"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/reader/multiline"
+	"github.com/elastic/beats/v7/libbeat/reader/readfile"
+	"github.com/elastic/beats/v7/libbeat/reader/readjson"
 )
 
 var (
@@ -55,8 +56,9 @@ var (
 		RecursiveGlob:  true,
 
 		// Harvester
-		BufferSize: 16 * humanize.KiByte,
-		MaxBytes:   10 * humanize.MiByte,
+		BufferSize:     16 * humanize.KiByte,
+		MaxBytes:       10 * humanize.MiByte,
+		LineTerminator: readfile.AutoLineTerminator,
 		LogConfig: LogConfig{
 			Backoff:       1 * time.Second,
 			BackoffFactor: 2,
@@ -96,18 +98,19 @@ type config struct {
 	ScanOrder  string `config:"scan.order"`
 	ScanSort   string `config:"scan.sort"`
 
-	ExcludeLines []match.Matcher   `config:"exclude_lines"`
-	IncludeLines []match.Matcher   `config:"include_lines"`
-	MaxBytes     int               `config:"max_bytes" validate:"min=0,nonzero"`
-	Multiline    *multiline.Config `config:"multiline"`
-	JSON         *json.Config      `config:"json"`
+	LineTerminator readfile.LineTerminator `config:"line_terminator"`
+	ExcludeLines   []match.Matcher         `config:"exclude_lines"`
+	IncludeLines   []match.Matcher         `config:"include_lines"`
+	MaxBytes       int                     `config:"max_bytes" validate:"min=0,nonzero"`
+	Multiline      *multiline.Config       `config:"multiline"`
+	JSON           *readjson.Config        `config:"json"`
 
 	// Hidden on purpose, used by the docker input:
 	DockerJSON *struct {
-		Stream string `config:"stream"`
-
-		// TODO move this to true by default
-		Partial bool `config:"partial"`
+		Stream   string `config:"stream"`
+		Partial  bool   `config:"partial"`
+		Format   string `config:"format"`
+		CRIFlags bool   `config:"cri_flags"`
 	} `config:"docker-json"`
 }
 
@@ -145,7 +148,7 @@ var ValidScanSort = map[string]struct{}{
 }
 
 func (c *config) Validate() error {
-	// DEPRECATED 6.0.0: warning is already outputted on prospector level
+	// DEPRECATED 6.0.0: warning is already outputted on input level
 	if c.InputType != "" {
 		c.Type = c.InputType
 	}

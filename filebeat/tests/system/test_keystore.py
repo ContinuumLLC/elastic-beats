@@ -56,8 +56,6 @@ class TestKeystore(BaseTest):
         """
         args = [self.test_binary,
                 "-systemTest",
-                "-test.coverprofile",
-                os.path.join(self.working_dir, "coverage.cov"),
                 "-c", os.path.join(self.working_dir, self.beat_name + ".yml"),
                 "-e", "-v", "-d", "*",
                 "keystore", "add", key, "--stdin",
@@ -68,7 +66,7 @@ class TestKeystore(BaseTest):
 
         proc = Proc(args, os.path.join(self.working_dir, self.beat_name + ".log"))
 
-        os.write(proc.stdin_write, value)
+        os.write(proc.stdin_write, value.encode("utf-8"))
         os.close(proc.stdin_write)
 
         return proc.start().wait()
