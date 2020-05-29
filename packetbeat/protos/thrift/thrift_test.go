@@ -24,9 +24,9 @@ import (
 	"net"
 	"testing"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/packetbeat/protos"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/packetbeat/protos"
 )
 
 func thriftForTests() *thriftPlugin {
@@ -729,7 +729,7 @@ func TestThrift_Parse_OneWayCallWithFin(t *testing.T) {
 	trans := expectThriftTransaction(t, thrift)
 	if trans.request.method != "zip" ||
 		trans.request.params != "()" ||
-		trans.reply != nil || trans.responseTime != 0 {
+		trans.reply != nil {
 
 		t.Error("Bad result:", trans)
 	}
@@ -759,7 +759,7 @@ func TestThrift_Parse_OneWayCall2Requests(t *testing.T) {
 	trans := expectThriftTransaction(t, thrift)
 	if trans.request.method != "zip" ||
 		trans.request.params != "()" ||
-		trans.reply != nil || trans.responseTime != 0 {
+		trans.reply != nil {
 
 		t.Error("Bad result:", trans)
 	}

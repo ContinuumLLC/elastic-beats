@@ -30,10 +30,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/packetbeat/protos"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/packetbeat/protos"
+	"github.com/elastic/beats/v7/packetbeat/publish"
 )
 
 type testParser struct {
@@ -49,6 +50,7 @@ type eventStore struct {
 }
 
 func (e *eventStore) publish(event beat.Event) {
+	publish.MarshalPacketbeatFields(&event, nil)
 	e.events = append(e.events, event)
 }
 
@@ -720,7 +722,7 @@ func TestEatBodyChunkedWaitCRLF(t *testing.T) {
 		t.Error("Unexpected state", st.parseState)
 	}
 
-	logp.Debug("http", "parseOffset", st.parseOffset)
+	logp.Debug("http", "parseOffset: %d", st.parseOffset)
 
 	ok, complete = parser.parseBodyChunkedWaitFinalCRLF(st, msg)
 	if ok != true || complete != false {
@@ -988,6 +990,43 @@ func TestHttpParser_RedactAuthorization_Proxy_raw(t *testing.T) {
 	}
 }
 
+func TestHttpParser_RedactHeaders(t *testing.T) {
+	logp.TestingSetup(logp.WithSelectors("http", "httpdetailed"))
+
+	http := httpModForTests(nil)
+	http.redactAuthorization = true
+	http.parserConfig.sendHeaders = true
+	http.parserConfig.sendAllHeaders = true
+	http.redactHeaders = []string{"header-to-redact", "should-not-exist"}
+
+	data := []byte("POST /services/ObjectControl?ID=client0 HTTP/1.1\r\n" +
+		"User-Agent: Mozilla/4.0 (compatible; MSIE 6.0; MS Web Services Client Protocol 2.0.50727.5472)\r\n" +
+		"Content-Type: text/xml; charset=utf-8\r\n" +
+		"SOAPAction: \"\"\r\n" +
+		"Header-To-Redact: sensitive-value\r\n" +
+		"Host: production.example.com\r\n" +
+		"Content-Length: 0\r\n" +
+		"Expect: 100-continue\r\n" +
+		"Accept-Encoding: gzip\r\n" +
+		"X-Forwarded-For: 10.216.89.132\r\n" +
+		"\r\n")
+
+	st := &stream{data: data, message: new(message)}
+
+	ok, _ := testParseStream(http, st, 0)
+
+	http.hideHeaders(st.message)
+
+	assert.True(t, ok)
+	var redactedString common.NetString = []byte("REDACTED")
+	var expectedAcceptEncoding common.NetString = []byte("gzip")
+	assert.Equal(t, redactedString, st.message.headers["header-to-redact"])
+	assert.Equal(t, expectedAcceptEncoding, st.message.headers["accept-encoding"])
+
+	_, invalidHeaderExists := st.message.headers["should-not-exist"]
+	assert.False(t, invalidHeaderExists)
+}
+
 func Test_splitCookiesHeader(t *testing.T) {
 	type io struct {
 		Input  string
@@ -1196,16 +1235,16 @@ func TestHttpParser_includeBodyFor(t *testing.T) {
 
 	trans := expectTransaction(t, &store)
 	assert.NotNil(t, trans)
-	hasKey, err := trans.HasKey("http.request.body")
+	hasKey, err := trans.HasKey("http.request.body.content")
 	if err != nil {
 		t.Fatal(err)
 	}
 	assert.True(t, hasKey)
-	contents, err := trans.GetValue("http.response.body")
+	contents, err := trans.GetValue("http.response.body.content")
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, "done.", contents)
+	assert.Equal(t, common.NetString("done."), contents)
 }
 
 func TestHttpParser_sendRequestResponse(t *testing.T) {
@@ -1307,8 +1346,10 @@ func Test_gap_in_body_http1dot0_fin(t *testing.T) {
 	http.ReceivedFin(tcptuple, 1, private)
 
 	trans := expectTransaction(t, &store)
-	assert.NotNil(t, trans)
-	assert.Equal(t, trans["notes"], []string{"Packet loss while capturing the response"})
+	if assert.NotNil(t, trans) {
+		notes, _ := trans.GetValue("error.message")
+		assert.Equal(t, notes, "Packet loss while capturing the response")
+	}
 }
 
 func TestHttp_configsSettingAll(t *testing.T) {
@@ -1416,10 +1457,360 @@ func TestHttp_includeBodies(t *testing.T) {
 
 		trans := expectTransaction(t, &store)
 		assert.NotNil(t, trans)
-		hasKey, _ := trans.HasKey("http.request.body")
+		hasKey, _ := trans.HasKey("http.request.body.content")
 		assert.Equal(t, testCase.hasRequest, hasKey, msg)
-		hasKey, _ = trans.HasKey("http.response.body")
+		hasKey, _ = trans.HasKey("http.response.body.content")
 		assert.Equal(t, testCase.hasResponse, hasKey, msg)
+	}
+}
+
+func TestHTTP_Encodings(t *testing.T) {
+	const req = "GET / HTTP/1.1\r\n" +
+		"Host: server\r\n" +
+		"\r\n"
+	const payload = "hola\n"
+
+	deflateBody := string([]byte{0xcb, 0xc8, 0xcf, 0x49, 0xe4, 0x02, 0x00})
+
+	gzipBody := string([]byte{0x1f, 0x8b, 0x08, 0x00, 0x68, 0xc4, 0x6a, 0x5b, 0x00, 0x03}) +
+		deflateBody +
+		string([]byte{0x78, 0xad, 0xdb, 0xd1, 0x05, 0x00, 0x00, 0x00})
+
+	gzipDeflateBody := string([]byte{
+		0x1f, 0x8b, 0x08, 0x00, 0x65, 0xdb, 0x6a, 0x5b, 0x00, 0x03, 0x3b, 0x7d,
+		0xe2, 0xbc, 0xe7, 0x13, 0x26, 0x06, 0x00, 0x95, 0xfa, 0x49, 0xbf, 0x07,
+		0x00, 0x00, 0x00})
+
+	var store eventStore
+	http := httpModForTests(&store)
+	config := defaultConfig
+	config.IncludeResponseBodyFor = []string{""}
+	http.setFromConfig(&config)
+
+	tcptuple := testCreateTCPTuple()
+
+	for testNum, testData := range []struct{ resp, expectedBody, note string }{
+		// Test case #0
+		// A chunked request
+		{
+			resp: "HTTP/1.1 200 OK\r\n" +
+				"Transfer-Encoding: chunked\r\n" +
+				"\r\n" +
+				"4\r\n" +
+				"ABCD\r\n" +
+				"0\r\n",
+			expectedBody: "ABCD",
+		},
+		// Test case #1
+		// gzip Transfer-Encoding
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Transfer-Encoding: gzip\r\n"+
+				"Content-Length: %d\r\n"+
+				"\r\n"+
+				"%s", len(gzipBody), gzipBody),
+			expectedBody: payload,
+		},
+		// Test case #2
+		// gzip Content-Encoding, the difference with #1 is purely semantic
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Content-Encoding: gzip\r\n"+
+				"Content-Length: %d\r\n"+
+				"\r\n"+
+				"%s", len(gzipBody), gzipBody),
+			expectedBody: payload,
+		},
+		// Test case #3
+		// gzip Content-Encoding, chunked Transfer encoding.
+		// Should first de-chunk and then apply gzip
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Content-Encoding: gzip\r\n"+
+				"Transfer-Encoding: chunked\r\n"+
+				"\r\n"+
+				"%x\r\n"+
+				"%s\r\n"+
+				"0\r\n", len(gzipBody), gzipBody),
+			expectedBody: payload,
+		},
+		// Test case #4
+		// gzip, chunked Transfer encoding.
+		// Same as #3
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Transfer-Encoding: gzip, chunked\r\n"+
+				"\r\n"+
+				"%x\r\n"+
+				"%s\r\n"+
+				"0\r\n", len(gzipBody), gzipBody),
+			expectedBody: payload,
+		},
+		// Test case #5
+		// Deflate transfer encoding
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Transfer-Encoding: deflate\r\n"+
+				"Content-Length: %d\r\n"+
+				"\r\n"+
+				"%s", len(deflateBody), deflateBody),
+			expectedBody: payload,
+		},
+		// Test case #6
+		// Deflate content encoding, x-gzip(=gzip) transfer encoding
+		// First gzip, then deflate
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Transfer-Encoding: x-gzip\r\n"+
+				"Content-Encoding: deflate\r\n"+
+				"Content-Length: %d\r\n"+
+				"\r\n"+
+				"%s", len(gzipDeflateBody), gzipDeflateBody),
+			expectedBody: payload,
+		},
+		// Test case #7
+		// First deflate, then gzip
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Transfer-Encoding: x-deflate, gzip\r\n"+
+				"Content-Length: %d\r\n"+
+				"\r\n"+
+				"%s", len(gzipDeflateBody), gzipDeflateBody),
+			expectedBody: payload,
+		},
+		// Test case #8
+		// Same behavior as #7
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Content-Encoding: deflate, gzip\r\n"+
+				"Content-Length: %d\r\n"+
+				"\r\n"+
+				"%s", len(gzipDeflateBody), gzipDeflateBody),
+			expectedBody: payload,
+		},
+		// Test case #9
+		// First de-chunk, then gzip, then deflate
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Content-Encoding: x-deflate, x-gzip\r\n"+
+				"Transfer-Encoding: chunked\r\n"+
+				"\r\n"+
+				"%x\r\n"+
+				"%s\r\n"+
+				"0\r\n", len(gzipDeflateBody), gzipDeflateBody),
+			expectedBody: payload,
+		},
+		// Test case #10
+		// Same behavior as #9
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Content-Encoding: deflate, identity\r\n"+
+				"Transfer-Encoding: gzip, chunked\r\n"+
+				"\r\n"+
+				"%x\r\n"+
+				"%s\r\n"+
+				"0\r\n", len(gzipDeflateBody), gzipDeflateBody),
+			expectedBody: payload,
+		},
+		// Test case #11
+		// Unsupported encoding
+		{
+			resp: fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+				"Content-Encoding: sdch\r\n"+
+				"Transfer-Encoding: chunked\r\n"+
+				"\r\n"+
+				"%x\r\n"+
+				"%s\r\n"+
+				"0\r\n", len(gzipDeflateBody), gzipDeflateBody),
+			note: "unable to decode body using sdch encoding: decoder not found",
+		},
+	} {
+		msg := fmt.Sprintf("test case #%d: %+v", testNum, testData)
+		packet := protos.Packet{Payload: []byte(req)}
+		private := protos.ProtocolData(&httpConnectionData{})
+		private = http.Parse(&packet, tcptuple, 0, private)
+
+		packet.Payload = []byte(testData.resp)
+		private = http.Parse(&packet, tcptuple, 1, private)
+
+		http.ReceivedFin(tcptuple, 1, private)
+
+		trans := expectTransaction(t, &store)
+		assert.NotNil(t, trans, msg)
+		body, err := trans.GetValue("http.response.body.content")
+		if err == nil {
+			assert.Equal(t, common.NetString(testData.expectedBody), body, msg)
+		} else {
+			if len(testData.expectedBody) == 0 && len(testData.note) > 0 {
+				note, err := trans.GetValue("error.message")
+				if !assert.Nil(t, err, msg) {
+					return
+				}
+				assert.Equal(t, testData.note, note)
+			} else {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func TestHTTP_Decoding_disabled(t *testing.T) {
+	const req = "GET / HTTP/1.1\r\n" +
+		"Host: server\r\n" +
+		"\r\n"
+
+	deflateBody := common.NetString{0xcb, 0xc8, 0xcf, 0x49, 0xe4, 0x02, 0x00}
+
+	var store eventStore
+	http := httpModForTests(&store)
+	config := defaultConfig
+	config.IncludeResponseBodyFor = []string{""}
+	config.DecodeBody = false
+
+	http.setFromConfig(&config)
+
+	tcptuple := testCreateTCPTuple()
+
+	resp := fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+		"Transfer-Encoding: deflate\r\n"+
+		"Content-Length: %d\r\n"+
+		"\r\n"+
+		"%s", len(deflateBody), deflateBody)
+
+	packet := protos.Packet{Payload: []byte(req)}
+	private := protos.ProtocolData(&httpConnectionData{})
+	private = http.Parse(&packet, tcptuple, 0, private)
+
+	packet.Payload = []byte(resp)
+	private = http.Parse(&packet, tcptuple, 1, private)
+
+	http.ReceivedFin(tcptuple, 1, private)
+
+	trans := expectTransaction(t, &store)
+	assert.NotNil(t, trans)
+	body, err := trans.GetValue("http.response.body.content")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, deflateBody, body)
+}
+
+func TestHttpParser_hostHeader(t *testing.T) {
+	template := "HEAD /_cat/shards HTTP/1.1\r\n" +
+		"Host: %s\r\n" +
+		"\r\n"
+	var store eventStore
+	http := httpModForTests(&store)
+	for _, test := range []struct {
+		title, host string
+		port        uint16
+		expected    common.MapStr
+	}{
+		{
+			title: "domain alone",
+			host:  "elasticsearch",
+			expected: common.MapStr{
+				"destination.domain": "elasticsearch",
+				"url.full":           "http://elasticsearch/_cat/shards",
+			},
+		},
+		{
+			title: "domain with port",
+			port:  9200,
+			host:  "elasticsearch:9200",
+			expected: common.MapStr{
+				"destination.domain": "elasticsearch",
+				"url.full":           "http://elasticsearch:9200/_cat/shards",
+			},
+		},
+		{
+			title: "ipv4",
+			host:  "127.0.0.1",
+			expected: common.MapStr{
+				"destination.domain": nil,
+				"url.full":           "http://127.0.0.1/_cat/shards",
+			},
+		},
+		{
+			title: "ipv4 with port",
+			port:  9200,
+			host:  "127.0.0.1:9200",
+			expected: common.MapStr{
+				"destination.domain": nil,
+				"url.full":           "http://127.0.0.1:9200/_cat/shards",
+			},
+		},
+		{
+			title: "ipv6 unboxed",
+			host:  "fd00::42",
+			expected: common.MapStr{
+				"destination.domain": nil,
+				"url.full":           "http://[fd00::42]/_cat/shards",
+			},
+		},
+		{
+			title: "ipv6 boxed",
+			host:  "[fd00::42]",
+			expected: common.MapStr{
+				"destination.domain": nil,
+				"url.full":           "http://[fd00::42]/_cat/shards",
+			},
+		},
+		{
+			title: "ipv6 boxed with port",
+			port:  9200,
+			host:  "[::1]:9200",
+			expected: common.MapStr{
+				"destination.domain": nil,
+				"url.full":           "http://[::1]:9200/_cat/shards",
+			},
+		},
+		{
+			title: "non boxed ipv6",
+			// This one is now illegal but it seems at some point the RFC
+			// didn't enforce the brackets when the port was omitted.
+			host: "fd00::1234",
+			expected: common.MapStr{
+				"destination.domain": nil,
+				"url.full":           "http://[fd00::1234]/_cat/shards",
+			},
+		},
+		{
+			title: "non-matching port",
+			port:  80,
+			host:  "myhost:9200",
+			expected: common.MapStr{
+				"destination.domain": "myhost",
+				"url.full":           "http://myhost:9200/_cat/shards",
+				"error.message":      []string{"Unmatched request", "Host header port number mismatch"},
+			},
+		},
+	} {
+		t.Run(test.title, func(t *testing.T) {
+			request := fmt.Sprintf(template, test.host)
+			tcptuple := testCreateTCPTuple()
+			if test.port != 0 {
+				tcptuple.DstPort = test.port
+			}
+			packet := protos.Packet{Payload: []byte(request)}
+			private := protos.ProtocolData(&httpConnectionData{})
+			private = http.Parse(&packet, tcptuple, 1, private)
+			http.Expired(tcptuple, private)
+			trans := expectTransaction(t, &store)
+			if !assert.NotNil(t, trans) {
+				t.Fatal("nil transaction")
+			}
+			for field, expected := range test.expected {
+				actual, err := trans.GetValue(field)
+				assert.Equal(t, expected, actual, field)
+				if expected != nil {
+					assert.Nil(t, err, field)
+				} else {
+					assert.Equal(t, common.ErrKeyNotFound, err, field)
+				}
+			}
+		})
 	}
 }
 

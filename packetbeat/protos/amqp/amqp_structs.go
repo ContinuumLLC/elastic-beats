@@ -20,7 +20,7 @@ package amqp
 import (
 	"time"
 
-	"github.com/elastic/beats/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/common"
 )
 
 type amqpMethod func(*amqpMessage, []byte) (bool, bool)
@@ -196,7 +196,7 @@ type amqpFrame struct {
 type amqpMessage struct {
 	ts             time.Time
 	tcpTuple       common.TCPTuple
-	cmdlineTuple   *common.CmdlineTuple
+	cmdlineTuple   *common.ProcessTuple
 	method         string
 	isRequest      bool
 	request        string
@@ -226,15 +226,15 @@ type amqpTransaction struct {
 	dst   common.Endpoint
 	ts    time.Time
 
-	method       string
-	request      string
-	response     string
-	responseTime int32
-	body         []byte
-	bytesOut     uint64
-	bytesIn      uint64
-	toString     bool
-	notes        []string
+	method   string
+	request  string
+	response string
+	endTime  time.Time
+	body     []byte
+	bytesOut uint64
+	bytesIn  uint64
+	toString bool
+	notes    []string
 
 	amqp common.MapStr
 

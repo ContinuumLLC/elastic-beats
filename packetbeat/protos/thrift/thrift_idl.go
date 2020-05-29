@@ -20,7 +20,7 @@ package thrift
 import (
 	"fmt"
 
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/logp"
 
 	"github.com/samuel/go-thrift/parser"
 )
@@ -68,7 +68,7 @@ func buildMethodsMap(thriftFiles map[string]parser.Thrift) map[string]*thriftIdl
 			for _, method := range service.Methods {
 				if _, exists := output[method.Name]; exists {
 					logp.Warn("Thrift IDL: Method %s is defined in more services: %s and %s",
-						output[method.Name].service.Name, service.Name)
+						method.Name, output[method.Name].service.Name, service.Name)
 				}
 				output[method.Name] = &thriftIdlMethod{
 					service:    service,

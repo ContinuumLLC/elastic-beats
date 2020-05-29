@@ -24,8 +24,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
 )
 
 type memcacheTest struct {
@@ -48,10 +48,10 @@ func (mct *memcacheTest) onTransaction(t *transaction) {
 
 func (mct *memcacheTest) genTransaction(requ, resp *message) *transaction {
 	if requ != nil {
-		requ.CmdlineTuple = &common.CmdlineTuple{}
+		requ.CmdlineTuple = &common.ProcessTuple{}
 	}
 	if resp != nil {
-		resp.CmdlineTuple = &common.CmdlineTuple{}
+		resp.CmdlineTuple = &common.ProcessTuple{}
 	}
 
 	t := newTransaction(requ, resp)

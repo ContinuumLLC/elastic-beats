@@ -21,18 +21,16 @@ package tls
 
 import (
 	"encoding/hex"
-	"encoding/pem"
 	"fmt"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/streambuf"
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/common/streambuf"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 const (
@@ -239,7 +237,7 @@ func TestParserHello(t *testing.T) {
 
 	helloMap := parser.hello.toMap()
 	assert.Equal(t, "3.3", mapGet(t, helloMap, "version").(string))
-	assert.Equal(t, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA", mapGet(t, helloMap, "selected_cipher"))
+	assert.Equal(t, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA", parser.hello.selected.cipherSuite.String())
 	assert.Equal(t, "DEFLATE", mapGet(t, helloMap, "selected_compression_method"))
 	assert.Equal(t, "abcdef", parser.hello.sessionID)
 	hasExts := parser.hello.extensions.Parsed != nil
@@ -259,7 +257,7 @@ func TestParserHello(t *testing.T) {
 
 	helloMap = parser.hello.toMap()
 	assert.Equal(t, "3.3", mapGet(t, helloMap, "version").(string))
-	assert.Equal(t, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA", mapGet(t, helloMap, "selected_cipher"))
+	assert.Equal(t, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA", parser.hello.selected.cipherSuite.String())
 	assert.Equal(t, "DEFLATE", mapGet(t, helloMap, "selected_compression_method"))
 	assert.Equal(t, "abcdef", parser.hello.sessionID)
 	hasExts = parser.hello.extensions.Parsed != nil
@@ -291,7 +289,6 @@ func TestParserHello(t *testing.T) {
 }
 
 func TestCertificates(t *testing.T) {
-
 	parser := &parser{}
 
 	// A certificates message with two certificates
@@ -324,7 +321,8 @@ func TestCertificates(t *testing.T) {
 		"subject.organizational_unit": "Technology",
 		"subject.province":            "California",
 	}
-	certMap := certToMap(c[0], false)
+
+	certMap := certToMap(c[0])
 
 	for key, expectedValue := range expected {
 		value, err := certMap.GetValue(key)
@@ -334,7 +332,7 @@ func TestCertificates(t *testing.T) {
 		} else if n, ok := value.(int); ok {
 			value = strconv.Itoa(n)
 		}
-		assert.Equal(t, expectedValue, value)
+		assert.Equal(t, expectedValue, value, key)
 	}
 	san, err := certMap.GetValue("alternative_names")
 	assert.NoError(t, err)
@@ -349,19 +347,27 @@ func TestCertificates(t *testing.T) {
 		"www.example.net",
 	}, san)
 
-	// test raw certificates in PEM format
-	for idx, cc := range c {
-		logStr := fmt.Sprintf("certificate %d", idx)
-		certMap = certToMap(cc, true)
-		obj, err := certMap.GetValue("raw")
-		assert.NoError(t, err, logStr)
-		cert := obj.(string)
-		assert.True(t, strings.HasPrefix(cert, "-----BEGIN CERTIFICATE-----\n"), logStr)
-		assert.True(t, strings.HasSuffix(cert, "-----END CERTIFICATE-----\n"), logStr)
-		block, rest := pem.Decode([]byte(cert))
-		assert.Equal(t, block.Type, "CERTIFICATE", logStr)
-		assert.Equal(t, block.Bytes, cc.Raw, logStr)
-		assert.Empty(t, rest, logStr)
+	type fpTest struct {
+		expected, actual string
+	}
+	fingerPrints := map[string]*fpTest{
+		"md5":    {expected: "68423D55EA27D0B4FDA1878FCAB7A1EB"},
+		"sha1":   {expected: "2509FB22F7671AEA2D0A28AE80516F390DE0CA21"},
+		"sha256": {expected: "642DE54D84C30494157F53F657BF9F89B4EA6C8B16351FD7EC258D556F821040"},
+	}
+	req := make(map[string]*string)
+	var algos []*FingerprintAlgorithm
+	for algo, testCase := range fingerPrints {
+		ptr, err := GetFingerprintAlgorithm(algo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		algos = append(algos, ptr)
+		req[algo] = &testCase.actual
+	}
+	hashCert(c[0], algos, req)
+	for k, v := range fingerPrints {
+		assert.Equal(t, v.expected, v.actual, k)
 	}
 }
 

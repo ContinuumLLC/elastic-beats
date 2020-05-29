@@ -18,14 +18,16 @@
 package tls
 
 import (
-	"github.com/elastic/beats/packetbeat/config"
-	"github.com/elastic/beats/packetbeat/protos"
+	"github.com/elastic/beats/v7/packetbeat/config"
+	"github.com/elastic/beats/v7/packetbeat/protos"
 )
 
 type tlsConfig struct {
 	config.ProtocolCommon  `config:",inline"`
-	SendCertificates       bool `config:"send_certificates"`
-	IncludeRawCertificates bool `config:"include_raw_certificates"`
+	SendCertificates       bool     `config:"send_certificates"`
+	IncludeRawCertificates bool     `config:"include_raw_certificates"`
+	IncludeDetailedFields  bool     `config:"include_detailed_fields"`
+	Fingerprints           []string `config:"fingerprints"`
 }
 
 var (
@@ -33,7 +35,8 @@ var (
 		ProtocolCommon: config.ProtocolCommon{
 			TransactionTimeout: protos.DefaultTransactionExpiration,
 		},
-		SendCertificates:       true,
-		IncludeRawCertificates: false,
+		SendCertificates:      true,
+		IncludeDetailedFields: true,
+		Fingerprints:          []string{"sha1"},
 	}
 )

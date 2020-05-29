@@ -24,13 +24,13 @@ import (
 	"math"
 	"time"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/monitoring"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/monitoring"
 
-	"github.com/elastic/beats/packetbeat/protos"
-	"github.com/elastic/beats/packetbeat/protos/applayer"
+	"github.com/elastic/beats/v7/packetbeat/protos"
+	"github.com/elastic/beats/v7/packetbeat/protos/applayer"
 )
 
 // memcache types
@@ -351,18 +351,17 @@ func newTransaction(requ, resp *message) *transaction {
 		t.Init(requ)
 		t.BytesOut = requ.Size
 		t.BytesIn = resp.Size
-		t.ResponseTime = int32(resp.Ts.Sub(requ.Ts).Nanoseconds() / 1e6) // [ms]
+		t.EndTime = resp.Ts
 		t.Notes = append(t.Notes, requ.Notes...)
 		t.Notes = append(t.Notes, resp.Notes...)
 	case requ != nil && resp == nil:
 		t.Init(requ)
 		t.BytesOut = requ.Size
-		t.ResponseTime = -1
 		t.Notes = append(t.Notes, requ.Notes...)
 	case requ == nil && resp != nil:
 		t.Init(resp)
 		t.BytesIn = resp.Size
-		t.ResponseTime = -1
+		t.EndTime = resp.Ts
 		t.Notes = append(t.Notes, resp.Notes...)
 	}
 

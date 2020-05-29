@@ -18,9 +18,9 @@
 package http
 
 import (
-	"github.com/elastic/beats/packetbeat/config"
-	"github.com/elastic/beats/packetbeat/protos"
-	"github.com/elastic/beats/packetbeat/protos/tcp"
+	"github.com/elastic/beats/v7/packetbeat/config"
+	"github.com/elastic/beats/v7/packetbeat/protos"
+	"github.com/elastic/beats/v7/packetbeat/protos/tcp"
 )
 
 type httpConfig struct {
@@ -35,6 +35,8 @@ type httpConfig struct {
 	HideKeywords           []string `config:"hide_keywords"`
 	RedactAuthorization    bool     `config:"redact_authorization"`
 	MaxMessageSize         int      `config:"max_message_size"`
+	DecodeBody             bool     `config:"decode_body"`
+	RedactHeaders          []string `config:"redact_headers"`
 }
 
 var (
@@ -43,5 +45,6 @@ var (
 			TransactionTimeout: protos.DefaultTransactionExpiration,
 		},
 		MaxMessageSize: tcp.TCPMaxDataInStream,
+		DecodeBody:     true,
 	}
 )
