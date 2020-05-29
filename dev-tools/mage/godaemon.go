@@ -21,6 +21,14 @@ import (
 	"errors"
 	"log"
 	"os"
+	"path/filepath"
+)
+
+var (
+	defaultCrossBuildGoDaemon = []CrossBuildOption{
+		ForPlatforms("linux"),
+		WithTarget("buildGoDaemon"),
+	}
 )
 
 // BuildGoDaemon builds the go-deamon binary.
@@ -35,8 +43,12 @@ func BuildGoDaemon() error {
 	}
 
 	// Test if binaries are up-to-date.
+	godaemonDir, err := listModuleDir("github.com/tsg/go-daemon")
+	if err != nil {
+		return err
+	}
+	input := filepath.Join(godaemonDir, "src", "god.c")
 	output := MustExpand("build/golang-crossbuild/god-{{.Platform.GOOS}}-{{.Platform.Arch}}")
-	input := MustExpand("{{ elastic_beats_dir }}/dev-tools/vendor/github.com/tsg/go-daemon/god.c")
 	if IsUpToDate(output, input) {
 		log.Println(">>> buildGoDaemon is up-to-date for", Platform.Name)
 		return nil
@@ -67,6 +79,7 @@ func BuildGoDaemon() error {
 
 // CrossBuildGoDaemon cross-build the go-daemon binary using the
 // golang-crossbuild environment.
-func CrossBuildGoDaemon() error {
-	return CrossBuild(ForPlatforms("linux"), WithTarget("buildGoDaemon"))
+func CrossBuildGoDaemon(options ...CrossBuildOption) error {
+	opts := append(defaultCrossBuildGoDaemon, options...)
+	return CrossBuild(opts...)
 }

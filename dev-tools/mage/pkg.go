@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"strconv"
 
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
@@ -37,7 +38,7 @@ func Package() error {
 
 	if len(Packages) == 0 {
 		return errors.New("no package specs are registered. Call " +
-			"UseCommunityBeatPackaging or UseElasticBeatPackaging first.")
+			"UseCommunityBeatPackaging, UseElasticBeatPackaging or USeElasticBeatWithoutXPackPackaging first.")
 	}
 
 	var tasks []interface{}
@@ -59,19 +60,37 @@ func Package() error {
 					continue
 				}
 
+				agentPackageType := TarGz
+				if pkg.OS == "windows" {
+					agentPackageType = Zip
+				}
+
+				agentPackageArch, err := getOSArchName(target, agentPackageType)
+				if err != nil {
+					log.Printf("Skipping arch %v for package type %v: %v", target.Arch(), pkgType, err)
+					continue
+				}
+
 				spec := pkg.Spec.Clone()
 				spec.OS = target.GOOS()
 				spec.Arch = packageArch
 				spec.Snapshot = Snapshot
 				spec.evalContext = map[string]interface{}{
-					"GOOS":        target.GOOS(),
-					"GOARCH":      target.GOARCH(),
-					"GOARM":       target.GOARM(),
-					"Platform":    target,
-					"PackageType": pkgType.String(),
-					"BinaryExt":   binaryExtension(target.GOOS()),
+					"GOOS":          target.GOOS(),
+					"GOARCH":        target.GOARCH(),
+					"GOARM":         target.GOARM(),
+					"Platform":      target,
+					"AgentArchName": agentPackageArch,
+					"PackageType":   pkgType.String(),
+					"BinaryExt":     binaryExtension(target.GOOS()),
 				}
-				spec.packageDir = packageStagingDir + "/" + pkgType.AddFileExtension(spec.Name+"-"+target.GOOS()+"-"+target.Arch())
+
+				spec.packageDir, err = pkgType.PackagingDir(packageStagingDir, target, spec)
+				if err != nil {
+					log.Printf("Skipping arch %v for package type %v: %v", target.Arch(), pkgType, err)
+					continue
+				}
+
 				spec = spec.Evaluate()
 
 				tasks = append(tasks, packageBuilder{target, spec, pkgType}.Build)
@@ -96,9 +115,61 @@ func (b packageBuilder) Build() error {
 		b.Spec.Name, b.Type, b.Platform.Name)
 }
 
+type testPackagesParams struct {
+	HasModules           bool
+	HasMonitorsD         bool
+	HasModulesD          bool
+	HasRootUserContainer bool
+	MinModules           *int
+}
+
+// TestPackagesOption defines a option to the TestPackages target.
+type TestPackagesOption func(params *testPackagesParams)
+
+// WithModules enables modules folder contents testing
+func WithModules() func(params *testPackagesParams) {
+	return func(params *testPackagesParams) {
+		params.HasModules = true
+	}
+}
+
+// MinModules sets the minimum number of modules to require
+func MinModules(n int) func(params *testPackagesParams) {
+	return func(params *testPackagesParams) {
+		minModules := n
+		params.MinModules = &minModules
+	}
+}
+
+// WithMonitorsD enables monitors folder contents testing.
+func WithMonitorsD() func(params *testPackagesParams) {
+	return func(params *testPackagesParams) {
+		params.HasMonitorsD = true
+	}
+}
+
+// WithModulesD enables modules.d folder contents testing
+func WithModulesD() func(params *testPackagesParams) {
+	return func(params *testPackagesParams) {
+		params.HasModulesD = true
+	}
+}
+
+// WithRootUserContainer allows root when checking user in container
+func WithRootUserContainer() func(params *testPackagesParams) {
+	return func(params *testPackagesParams) {
+		params.HasRootUserContainer = true
+	}
+}
+
 // TestPackages executes the package tests on the produced binaries. These tests
 // inspect things like file ownership and mode.
-func TestPackages() error {
+func TestPackages(options ...TestPackagesOption) error {
+	params := testPackagesParams{}
+	for _, opt := range options {
+		opt(&params)
+	}
+
 	fmt.Println(">> Testing package contents")
 	goTest := sh.OutCmd("go", "test")
 
@@ -106,11 +177,34 @@ func TestPackages() error {
 	if mg.Verbose() {
 		args = append(args, "-v")
 	}
-	args = append(args,
-		MustExpand("{{ elastic_beats_dir }}/dev-tools/packaging/package_test.go"),
-		"-files",
-		MustExpand("{{.PWD}}/build/distributions/*"),
-	)
+
+	args = append(args, MustExpand("{{ elastic_beats_dir }}/dev-tools/packaging/package_test.go"))
+
+	if params.HasModules {
+		args = append(args, "--modules")
+	}
+
+	if params.MinModules != nil {
+		args = append(args, "--min-modules", strconv.Itoa(*params.MinModules))
+	}
+
+	if params.HasMonitorsD {
+		args = append(args, "--monitors.d")
+	}
+
+	if params.HasModulesD {
+		args = append(args, "--modules.d")
+	}
+
+	if params.HasRootUserContainer {
+		args = append(args, "--root-user-container")
+	}
+
+	if BeatUser == "root" {
+		args = append(args, "-root-owner")
+	}
+
+	args = append(args, "-files", MustExpand("{{.PWD}}/build/distributions/*"))
 
 	if out, err := goTest(args...); err != nil {
 		if !mg.Verbose() {

@@ -33,25 +33,38 @@ import (
 	"github.com/magefile/mage/sh"
 	"github.com/pkg/errors"
 	"golang.org/x/tools/go/vcs"
+
+	"github.com/elastic/beats/v7/dev-tools/mage/gotool"
 )
 
 const (
-	fpmVersion = "1.10.0"
+	fpmVersion = "1.11.0"
 
 	// Docker images. See https://github.com/elastic/golang-crossbuild.
-	beatsFPMImage        = "docker.elastic.co/beats-dev/fpm"
-	beatsCrossBuildImage = "docker.elastic.co/beats-dev/golang-crossbuild"
+	beatsFPMImage = "docker.elastic.co/beats-dev/fpm"
+	// BeatsCrossBuildImage is the image used for crossbuilding Beats.
+	BeatsCrossBuildImage = "docker.elastic.co/beats-dev/golang-crossbuild"
 
 	elasticBeatsImportPath = "github.com/elastic/beats"
+
+	elasticBeatsModulePath = "github.com/elastic/beats/v7"
 )
 
 // Common settings with defaults derived from files, CWD, and environment.
 var (
-	GOOS      = build.Default.GOOS
-	GOARCH    = build.Default.GOARCH
-	GOARM     = EnvOr("GOARM", "")
-	Platform  = MakePlatformAttributes(GOOS, GOARCH, GOARM)
-	BinaryExt = ""
+	GOOS         = build.Default.GOOS
+	GOARCH       = build.Default.GOARCH
+	GOARM        = EnvOr("GOARM", "")
+	Platform     = MakePlatformAttributes(GOOS, GOARCH, GOARM)
+	BinaryExt    = ""
+	XPackDir     = "../x-pack"
+	RaceDetector = false
+	TestCoverage = false
+	UseVendor    = true
+
+	// CrossBuildMountModcache, if true, mounts $GOPATH/pkg/mod into
+	// the crossbuild images at /go/pkg/mod, read-only.
+	CrossBuildMountModcache = false
 
 	BeatName        = EnvOr("BEAT_NAME", filepath.Base(CWD()))
 	BeatServiceName = EnvOr("BEAT_SERVICE_NAME", BeatName)
@@ -60,12 +73,18 @@ var (
 	BeatVendor      = EnvOr("BEAT_VENDOR", "Elastic")
 	BeatLicense     = EnvOr("BEAT_LICENSE", "ASL 2.0")
 	BeatURL         = EnvOr("BEAT_URL", "https://www.elastic.co/products/beats/"+BeatName)
+	BeatUser        = EnvOr("BEAT_USER", "root")
+
+	BeatProjectType ProjectType
 
 	Snapshot bool
 
+	versionQualified bool
+	versionQualifier string
+
 	FuncMap = map[string]interface{}{
 		"beat_doc_branch":   BeatDocBranch,
-		"beat_version":      BeatVersion,
+		"beat_version":      BeatQualifiedVersion,
 		"commit":            CommitHash,
 		"date":              BuildDate,
 		"elastic_beats_dir": ElasticBeatsDir,
@@ -82,11 +101,40 @@ func init() {
 	}
 
 	var err error
+	RaceDetector, err = strconv.ParseBool(EnvOr("RACE_DETECTOR", "false"))
+	if err != nil {
+		panic(errors.Wrap(err, "failed to parse RACE_DETECTOR env value"))
+	}
+
+	TestCoverage, err = strconv.ParseBool(EnvOr("TEST_COVERAGE", "false"))
+	if err != nil {
+		panic(errors.Wrap(err, "failed to parse TEST_COVERAGE env value"))
+	}
+	UseVendor, err = strconv.ParseBool(EnvOr("USE_VENDOR", "true"))
+	if err != nil {
+		panic(errors.Wrap(err, "failed to parse USE_VENDOR env value"))
+	}
+
 	Snapshot, err = strconv.ParseBool(EnvOr("SNAPSHOT", "false"))
 	if err != nil {
-		panic(errors.Errorf("failed to parse SNAPSHOT value", err))
+		panic(errors.Wrap(err, "failed to parse SNAPSHOT env value"))
 	}
+
+	versionQualifier, versionQualified = os.LookupEnv("VERSION_QUALIFIER")
 }
+
+// ProjectType specifies the type of project (OSS vs X-Pack).
+type ProjectType uint8
+
+// Project types.
+const (
+	OSSProject ProjectType = iota
+	XPackProject
+	CommunityProject
+)
+
+// ErrUnknownProjectType is returned if an unknown ProjectType value is used.
+var ErrUnknownProjectType = fmt.Errorf("unknown ProjectType")
 
 // EnvMap returns map containing the common settings variables and all variables
 // from the environment. args are appended to the output prior to adding the
@@ -110,6 +158,7 @@ func varMap(args ...map[string]interface{}) map[string]interface{} {
 		"GOARM":           GOARM,
 		"Platform":        Platform,
 		"BinaryExt":       BinaryExt,
+		"XPackDir":        XPackDir,
 		"BeatName":        BeatName,
 		"BeatServiceName": BeatServiceName,
 		"BeatIndexPrefix": BeatIndexPrefix,
@@ -117,7 +166,9 @@ func varMap(args ...map[string]interface{}) map[string]interface{} {
 		"BeatVendor":      BeatVendor,
 		"BeatLicense":     BeatLicense,
 		"BeatURL":         BeatURL,
+		"BeatUser":        BeatUser,
 		"Snapshot":        Snapshot,
+		"Qualifier":       versionQualifier,
 	}
 
 	// Add the extra args to the map.
@@ -133,31 +184,35 @@ func varMap(args ...map[string]interface{}) map[string]interface{} {
 func dumpVariables() (string, error) {
 	var dumpTemplate = `## Variables
 
-GOOS            = {{.GOOS}}
-GOARCH          = {{.GOARCH}}
-GOARM           = {{.GOARM}}
-Platform        = {{.Platform}}
-BinaryExt       = {{.BinaryExt}}
-BeatName        = {{.BeatName}}
-BeatServiceName = {{.BeatServiceName}}
-BeatIndexPrefix = {{.BeatIndexPrefix}}
-BeatDescription = {{.BeatDescription}}
-BeatVendor      = {{.BeatVendor}}
-BeatLicense     = {{.BeatLicense}}
-BeatURL         = {{.BeatURL}}
+GOOS             = {{.GOOS}}
+GOARCH           = {{.GOARCH}}
+GOARM            = {{.GOARM}}
+Platform         = {{.Platform}}
+BinaryExt        = {{.BinaryExt}}
+XPackDir         = {{.XPackDir}}
+BeatName         = {{.BeatName}}
+BeatServiceName  = {{.BeatServiceName}}
+BeatIndexPrefix  = {{.BeatIndexPrefix}}
+BeatDescription  = {{.BeatDescription}}
+BeatVendor       = {{.BeatVendor}}
+BeatLicense      = {{.BeatLicense}}
+BeatURL          = {{.BeatURL}}
+BeatUser         = {{.BeatUser}}
+VersionQualifier = {{.Qualifier}}
 
 ## Functions
 
-beat_doc_branch     = {{ beat_doc_branch }}
-beat_version        = {{ beat_version }}
-commit              = {{ commit }}
-date                = {{ date }}
-elastic_beats_dir   = {{ elastic_beats_dir }}
-go_version          = {{ go_version }}
-repo.RootImportPath = {{ repo.RootImportPath }}
-repo.RootDir        = {{ repo.RootDir }}
-repo.ImportPath     = {{ repo.ImportPath }}
-repo.SubDir         = {{ repo.SubDir }}
+beat_doc_branch              = {{ beat_doc_branch }}
+beat_version                 = {{ beat_version }}
+commit                       = {{ commit }}
+date                         = {{ date }}
+elastic_beats_dir            = {{ elastic_beats_dir }}
+go_version                   = {{ go_version }}
+repo.RootImportPath          = {{ repo.RootImportPath }}
+repo.CanonicalRootImportPath = {{ repo.CanonicalRootImportPath }}
+repo.RootDir                 = {{ repo.RootDir }}
+repo.ImportPath              = {{ repo.ImportPath }}
+repo.SubDir                  = {{ repo.SubDir }}
 `
 
 	return Expand(dumpTemplate)
@@ -194,6 +249,14 @@ var (
 	elasticBeatsDirLock  sync.Mutex
 )
 
+// SetElasticBeatsDir sets the internal elastic beats dir to a preassigned value
+func SetElasticBeatsDir(path string) {
+	elasticBeatsDirLock.Lock()
+	defer elasticBeatsDirLock.Unlock()
+
+	elasticBeatsDirValue = path
+}
+
 // ElasticBeatsDir returns the path to Elastic beats dir.
 func ElasticBeatsDir() (string, error) {
 	elasticBeatsDirLock.Lock()
@@ -210,55 +273,20 @@ func ElasticBeatsDir() (string, error) {
 	return elasticBeatsDirValue, elasticBeatsDirErr
 }
 
-// findElasticBeatsDir attempts to find the root of the Elastic Beats directory.
-// It checks to see if the current project is elastic/beats, and then if not
-// checks the vendor directory.
+// findElasticBeatsDir returns the root directory of the Elastic Beats module, using "go list".
 //
-// If your project places the Beats files in a different location (specifically
-// the dev-tools/ contents) then you can use SetElasticBeatsDir().
+// When running within the Elastic Beats repo, this will return the repo root. Otherwise,
+// it will return the root directory of the module from within the module cache or vendor
+// directory.
 func findElasticBeatsDir() (string, error) {
 	repo, err := GetProjectRepoInfo()
 	if err != nil {
 		return "", err
 	}
-
 	if repo.IsElasticBeats() {
 		return repo.RootDir, nil
 	}
-
-	const devToolsImportPath = elasticBeatsImportPath + "/dev-tools/mage"
-
-	// Search in project vendor directories.
-	searchPaths := []string{
-		filepath.Join(repo.RootDir, repo.SubDir, "vendor", devToolsImportPath),
-		filepath.Join(repo.RootDir, "vendor", devToolsImportPath),
-	}
-
-	for _, path := range searchPaths {
-		if _, err := os.Stat(path); err == nil {
-			return filepath.Join(path, "../.."), nil
-		}
-	}
-
-	return "", errors.Errorf("failed to find %v in the project's vendor", devToolsImportPath)
-}
-
-// SetElasticBeatsDir explicitly sets the location of the Elastic Beats
-// directory. If not set then it will attempt to locate it.
-func SetElasticBeatsDir(dir string) {
-	elasticBeatsDirLock.Lock()
-	defer elasticBeatsDirLock.Unlock()
-
-	info, err := os.Stat(dir)
-	if err != nil {
-		panic(errors.Wrapf(err, "failed to read elastic beats dir at %v", dir))
-	}
-
-	if !info.IsDir() {
-		panic(errors.Errorf("elastic beats dir=%v is not a directory", dir))
-	}
-
-	elasticBeatsDirValue = filepath.Clean(dir)
+	return listModuleDir(elasticBeatsModulePath)
 }
 
 var (
@@ -298,9 +326,23 @@ var (
 	beatVersionOnce  sync.Once
 )
 
+// BeatQualifiedVersion returns the Beat's qualified version.  The value can be overwritten by
+// setting VERSION_QUALIFIER in the environment.
+func BeatQualifiedVersion() (string, error) {
+	version, err := beatVersion()
+	if err != nil {
+		return "", err
+	}
+	// version qualifier can intentionally be set to "" to override build time var
+	if !versionQualified || versionQualifier == "" {
+		return version, nil
+	}
+	return version + "-" + versionQualifier, nil
+}
+
 // BeatVersion returns the Beat's version. The value can be overridden by
 // setting BEAT_VERSION in the environment.
-func BeatVersion() (string, error) {
+func beatVersion() (string, error) {
 	beatVersionOnce.Do(func() {
 		beatVersionValue = os.Getenv("BEAT_VERSION")
 		if beatVersionValue != "" {
@@ -376,7 +418,7 @@ func getBuildVariableSources() *BuildVariableSources {
 		return buildVariableSources
 	}
 
-	panic(errors.Errorf("magefile must call mage.SetBuildVariableSources() "+
+	panic(errors.Errorf("magefile must call devtools.SetBuildVariableSources() "+
 		"because it is not an elastic beat (repo=%+v)", repo.RootImportPath))
 }
 
@@ -492,16 +534,17 @@ func parseDocBranch(data []byte) (string, error) {
 
 // ProjectRepoInfo contains information about the project's repo.
 type ProjectRepoInfo struct {
-	RootImportPath string // Import path at the project root.
-	RootDir        string // Root directory of the project.
-	ImportPath     string // Import path of the current directory.
-	SubDir         string // Relative path from the root dir to the current dir.
+	RootImportPath          string // Import path at the project root.
+	CanonicalRootImportPath string // Pre-modules root import path (does not contain semantic import version identifier).
+	RootDir                 string // Root directory of the project.
+	ImportPath              string // Import path of the current directory.
+	SubDir                  string // Relative path from the root dir to the current dir.
 }
 
 // IsElasticBeats returns true if the current project is
 // github.com/elastic/beats.
 func (r *ProjectRepoInfo) IsElasticBeats() bool {
-	return r.RootImportPath == elasticBeatsImportPath
+	return r.CanonicalRootImportPath == elasticBeatsImportPath
 }
 
 var (
@@ -514,21 +557,158 @@ var (
 // import path and the current directory's import path.
 func GetProjectRepoInfo() (*ProjectRepoInfo, error) {
 	repoInfoOnce.Do(func() {
-		repoInfoValue, repoInfoErr = getProjectRepoInfo()
+		if isUnderGOPATH() {
+			repoInfoValue, repoInfoErr = getProjectRepoInfoUnderGopath()
+		} else {
+			repoInfoValue, repoInfoErr = getProjectRepoInfoWithModules()
+		}
 	})
 
 	return repoInfoValue, repoInfoErr
 }
 
-func getProjectRepoInfo() (*ProjectRepoInfo, error) {
+func isUnderGOPATH() bool {
+	underGOPATH := false
+	srcDirs, err := listSrcGOPATHs()
+	if err != nil {
+		return false
+	}
+	for _, srcDir := range srcDirs {
+		rel, err := filepath.Rel(srcDir, CWD())
+		if err != nil {
+			continue
+		}
+
+		if !strings.Contains(rel, "..") {
+			underGOPATH = true
+		}
+	}
+
+	return underGOPATH
+}
+
+func getProjectRepoInfoWithModules() (*ProjectRepoInfo, error) {
 	var (
-		cwd            = CWD()
-		rootImportPath string
-		srcDir         string
+		cwd     = CWD()
+		rootDir string
+		subDir  string
 	)
 
-	// Search upward from the CWD to determine the project root based on VCS.
+	possibleRoot := cwd
 	var errs []string
+	for {
+		isRoot, err := isGoModRoot(possibleRoot)
+		if err != nil {
+			errs = append(errs, err.Error())
+		}
+
+		if isRoot {
+			rootDir = possibleRoot
+			subDir, err = filepath.Rel(rootDir, cwd)
+			if err != nil {
+				errs = append(errs, err.Error())
+			}
+			break
+		}
+
+		possibleRoot = filepath.Dir(possibleRoot)
+	}
+
+	if rootDir == "" {
+		return nil, errors.Errorf("failed to find root dir of module file: %v", errs)
+	}
+
+	rootImportPath, err := gotool.GetModuleName()
+	if err != nil {
+		return nil, err
+	}
+
+	return &ProjectRepoInfo{
+		RootImportPath:          rootImportPath,
+		CanonicalRootImportPath: filepath.ToSlash(extractCanonicalRootImportPath(rootImportPath)),
+		RootDir:                 rootDir,
+		SubDir:                  subDir,
+		ImportPath:              filepath.ToSlash(filepath.Join(rootImportPath, subDir)),
+	}, nil
+}
+
+func isGoModRoot(path string) (bool, error) {
+	gomodPath := filepath.Join(path, "go.mod")
+	_, err := os.Stat(gomodPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func getProjectRepoInfoUnderGopath() (*ProjectRepoInfo, error) {
+	var (
+		cwd     = CWD()
+		errs    []string
+		rootDir string
+	)
+
+	srcDirs, err := listSrcGOPATHs()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, srcDir := range srcDirs {
+		_, root, err := vcs.FromDir(cwd, srcDir)
+		if err != nil {
+			// Try the next gopath.
+			errs = append(errs, err.Error())
+			continue
+		}
+		rootDir = filepath.Join(srcDir, root)
+		break
+	}
+
+	if rootDir == "" {
+		return nil, errors.Errorf("error while determining root directory: %v", errs)
+	}
+
+	subDir, err := filepath.Rel(rootDir, cwd)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get relative path to repo root")
+	}
+
+	rootImportPath, err := gotool.GetModuleName()
+	if err != nil {
+		return nil, err
+	}
+
+	return &ProjectRepoInfo{
+		RootImportPath:          rootImportPath,
+		CanonicalRootImportPath: filepath.ToSlash(extractCanonicalRootImportPath(rootImportPath)),
+		RootDir:                 rootDir,
+		SubDir:                  subDir,
+		ImportPath:              filepath.ToSlash(filepath.Join(rootImportPath, subDir)),
+	}, nil
+}
+
+func extractCanonicalRootImportPath(rootImportPath string) string {
+	// In order to be compatible with go modules, the root import
+	// path of any module at major version v2 or higher must include
+	// the major version.
+	// Ref: https://github.com/golang/go/wiki/Modules#semantic-import-versioning
+	//
+	// Thus, Beats has to include the major version as well.
+	// This regex removes the major version from the import path.
+	re := regexp.MustCompile(`(/v[1-9][0-9]*)$`)
+	return re.ReplaceAllString(rootImportPath, "")
+}
+
+func listSrcGOPATHs() ([]string, error) {
+	var (
+		cwd     = CWD()
+		errs    []string
+		srcDirs []string
+	)
 	for _, gopath := range filepath.SplitList(build.Default.GOPATH) {
 		gopath = filepath.Clean(gopath)
 
@@ -542,33 +722,12 @@ func getProjectRepoInfo() (*ProjectRepoInfo, error) {
 			}
 		}
 
-		srcDir = filepath.Join(gopath, "src")
-		_, root, err := vcs.FromDir(cwd, srcDir)
-		if err != nil {
-			// Try the next gopath.
-			errs = append(errs, err.Error())
-			continue
-		}
-		rootImportPath = root
-		break
-	}
-	if rootImportPath == "" {
-		return nil, errors.Errorf("failed to determine root import path (Did "+
-			"you git init?, Is the project in the GOPATH? GOPATH=%v, CWD=%v?): %v",
-			build.Default.GOPATH, cwd, errs)
+		srcDirs = append(srcDirs, filepath.Join(gopath, "src"))
 	}
 
-	rootDir := filepath.Join(srcDir, rootImportPath)
-	subDir, err := filepath.Rel(rootDir, cwd)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get relative path to repo root")
+	if len(srcDirs) == 0 {
+		return srcDirs, errors.Errorf("failed to find any GOPATH %v", errs)
 	}
-	importPath := filepath.ToSlash(filepath.Join(rootImportPath, subDir))
 
-	return &ProjectRepoInfo{
-		RootImportPath: rootImportPath,
-		RootDir:        rootDir,
-		SubDir:         subDir,
-		ImportPath:     importPath,
-	}, nil
+	return srcDirs, nil
 }
