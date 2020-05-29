@@ -15,13 +15,16 @@ class BaseTest(MetricbeatTest):
     @classmethod
     def setUpClass(self):
         self.beat_name = "auditbeat"
-        self.beat_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../../"))
+
+        if not hasattr(self, 'beat_path'):
+            self.beat_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../"))
+
         super(MetricbeatTest, self).setUpClass()
 
     def create_file(self, path, contents):
         f = open(path, 'wb')
-        f.write(contents)
+        f.write(bytes(contents, "utf-8"))
         f.close()
 
     def check_event(self, event, expected):

@@ -20,7 +20,6 @@
 package file_integrity
 
 import (
-	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,14 +28,8 @@ import (
 	"github.com/fsnotify/fsevents"
 	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
-
-var underTest = false
-
-func init() {
-	underTest = flag.Lookup("test.v") != nil
-}
 
 type fsreader struct {
 	stream      *fsevents.EventStream
@@ -153,7 +146,8 @@ func (r *fsreader) consumeEvents(done <-chan struct{}) {
 			return
 		case events := <-r.stream.Events:
 			for _, event := range events {
-				if !r.isWatched(event.Path) || r.config.IsExcludedPath(event.Path) {
+				if !r.isWatched(event.Path) || r.config.IsExcludedPath(event.Path) ||
+					!r.config.IsIncludedPath(event.Path) {
 					continue
 				}
 				r.log.Debugw("Received FSEvents event",

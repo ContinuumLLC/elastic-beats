@@ -18,8 +18,8 @@
 package core
 
 import (
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/metricbeat/mb"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/metricbeat/mb"
 )
 
 // AddDatasetToEvent adds dataset information to the event. In particular this
@@ -30,4 +30,10 @@ func AddDatasetToEvent(module, metricSet string, event *mb.Event) {
 	}
 
 	event.RootFields.Put("event.module", module)
+
+	// Modules without "datasets" should set their module and metricset names
+	// to the same value then this will omit the event.dataset field.
+	if module != metricSet {
+		event.RootFields.Put("event.dataset", metricSet)
+	}
 }

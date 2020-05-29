@@ -1,17 +1,16 @@
-FROM golang:1.10.3
-MAINTAINER Nicolas Ruflin <ruflin@elastic.co>
+FROM golang:1.13.9
 
-RUN set -x && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-         netcat python-pip virtualenv && \
-    apt-get clean
+RUN \
+    apt-get update \
+      && apt-get install -y --no-install-recommends \
+         python3 \
+         python3-pip \
+         python3-venv \
+         librpm-dev \
+      && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --upgrade setuptools
+ENV PYTHON_ENV=/tmp/python-env
 
-# Setup work environment
-ENV AUDITBEAT_PATH /go/src/github.com/elastic/beats/auditbeat
-
-RUN mkdir -p $AUDITBEAT_PATH/build/coverage
-WORKDIR $AUDITBEAT_PATH
-HEALTHCHECK CMD exit 0
+RUN pip3 install --upgrade pip
+RUN pip3 install --upgrade setuptools
+RUN pip3 install --upgrade docker-compose==1.23.2

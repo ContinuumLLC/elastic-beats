@@ -22,9 +22,9 @@ import (
 	"os"
 	"sync"
 
-	"github.com/boltdb/bolt"
+	bolt "github.com/coreos/bbolt"
 
-	"github.com/elastic/beats/libbeat/paths"
+	"github.com/elastic/beats/v7/libbeat/paths"
 )
 
 var (
