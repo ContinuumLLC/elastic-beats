@@ -17,7 +17,7 @@
 
 package reason
 
-import "github.com/elastic/beats/libbeat/common"
+import "github.com/elastic/beats/v7/libbeat/common"
 
 type Reason interface {
 	error
@@ -68,4 +68,7 @@ func Fail(r Reason) common.MapStr {
 
 func FailIO(err error) common.MapStr { return Fail(IOError{err}) }
 
-func FailValidate(err error) common.MapStr { return Fail(ValidateError{err}) }
+// MakeValidateError creates an instance of ValidateError from the given error.
+func MakeValidateError(err error) ValidateError {
+	return ValidateError{err}
+}

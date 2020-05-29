@@ -21,15 +21,12 @@ import (
 	"errors"
 	"time"
 
-	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
-	"github.com/elastic/beats/libbeat/outputs/transport"
-
-	"github.com/elastic/beats/heartbeat/monitors"
+	"github.com/elastic/beats/v7/heartbeat/monitors"
+	"github.com/elastic/beats/v7/libbeat/common/transport"
+	"github.com/elastic/beats/v7/libbeat/common/transport/tlscommon"
 )
 
 type Config struct {
-	Name string `config:"name"`
-
 	// check all ports if host does not contain port
 	Hosts []string `config:"hosts" validate:"required"`
 	Ports []uint16 `config:"ports"`
@@ -49,7 +46,6 @@ type Config struct {
 }
 
 var DefaultConfig = Config{
-	Name:    "tcp",
 	Timeout: 16 * time.Second,
 	Mode:    monitors.DefaultIPSettings,
 }

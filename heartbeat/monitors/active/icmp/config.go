@@ -20,12 +20,10 @@ package icmp
 import (
 	"time"
 
-	"github.com/elastic/beats/heartbeat/monitors"
+	"github.com/elastic/beats/v7/heartbeat/monitors"
 )
 
 type Config struct {
-	Name string `config:"name"`
-
 	Hosts []string            `config:"hosts" validate:"required"`
 	Mode  monitors.IPSettings `config:",inline"`
 
@@ -34,7 +32,6 @@ type Config struct {
 }
 
 var DefaultConfig = Config{
-	Name: "icmp",
 	Mode: monitors.DefaultIPSettings,
 
 	Timeout: 16 * time.Second,

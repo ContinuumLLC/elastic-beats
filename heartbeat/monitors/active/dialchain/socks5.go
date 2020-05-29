@@ -20,9 +20,10 @@ package dialchain
 import (
 	"net"
 
-	"github.com/elastic/beats/heartbeat/look"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/outputs/transport"
+	"github.com/elastic/beats/v7/heartbeat/look"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common/transport"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 // SOCKS5Layer configures a SOCKS5 proxy layer in a DialerChain.
@@ -35,10 +36,10 @@ import (
 //    }
 //  }
 func SOCKS5Layer(config *transport.ProxyConfig) Layer {
-	return func(event common.MapStr, next transport.Dialer) (transport.Dialer, error) {
+	return func(event *beat.Event, next transport.Dialer) (transport.Dialer, error) {
 		var timer timer
 
-		dialer, err := transport.ProxyDialer(config, startTimerAfterDial(&timer, next))
+		dialer, err := transport.ProxyDialer(logp.NewLogger("socks5Layer"), config, startTimerAfterDial(&timer, next))
 		if err != nil {
 			return nil, err
 		}
@@ -48,7 +49,7 @@ func SOCKS5Layer(config *transport.ProxyConfig) Layer {
 			// TODO: add proxy url to event?
 
 			timer.stop()
-			event.Put("socks5.rtt.connect", look.RTT(timer.duration()))
+			event.Fields.Put("socks5.rtt.connect", look.RTT(timer.duration()))
 			return conn, nil
 		}), nil
 	}
