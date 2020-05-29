@@ -20,71 +20,45 @@
 package main
 
 import (
-	"fmt"
-	"time"
-
 	"github.com/magefile/mage/mg"
-	"github.com/magefile/mage/sh"
 
-	"github.com/elastic/beats/dev-tools/mage"
+	devtools "github.com/elastic/beats/v7/dev-tools/mage"
+
+	// mage:import
+	_ "github.com/elastic/beats/v7/dev-tools/mage/target/common"
+	// mage:import
+	_ "github.com/elastic/beats/v7/dev-tools/mage/target/build"
+	// mage:import
+	_ "github.com/elastic/beats/v7/dev-tools/mage/target/pkg"
+	// mage:import
+	_ "github.com/elastic/beats/v7/dev-tools/mage/target/dashboards"
+	// mage:import
+	_ "github.com/elastic/beats/v7/dev-tools/mage/target/docs"
+	// mage:import
+	_ "github.com/elastic/beats/v7/dev-tools/mage/target/test"
+	// mage:import
+	"github.com/elastic/beats/v7/dev-tools/mage/target/unittest"
+	// mage:import
+	winlogbeat "github.com/elastic/beats/v7/winlogbeat/scripts/mage"
 )
 
 func init() {
-	mage.BeatDescription = "Winlogbeat ships Windows event logs to Elasticsearch or Logstash."
-
-	mage.Platforms = mage.Platforms.Filter("windows")
+	unittest.RegisterGoTestDeps(winlogbeat.Update.Fields)
+	winlogbeat.SelectLogic = devtools.OSSProject
 }
 
-// Build builds the Beat binary.
-func Build() error {
-	return mage.Build(mage.DefaultBuildArgs())
-}
+// Update is an alias for update:all. This is a workaround for
+// https://github.com/magefile/mage/issues/217.
+func Update() { mg.Deps(winlogbeat.Update.All) }
 
-// GolangCrossBuild build the Beat binary inside of the golang-builder.
-// Do not use directly, use crossBuild instead.
-func GolangCrossBuild() error {
-	return mage.GolangCrossBuild(mage.DefaultGolangCrossBuildArgs())
-}
+// Fields is an alias for update:fields.
+//
+// TODO: dev-tools/jenkins_ci.ps1 uses this. This should be removed when all
+// projects have update to use goUnitTest.
+func Fields() { mg.Deps(winlogbeat.Update.Fields) }
 
-// BuildGoDaemon builds the go-daemon binary (use crossBuildGoDaemon).
-func BuildGoDaemon() error {
-	return mage.BuildGoDaemon()
-}
-
-// CrossBuild cross-builds the beat for all target platforms.
-func CrossBuild() error {
-	return mage.CrossBuild()
-}
-
-// CrossBuildGoDaemon cross-builds the go-daemon binary using Docker.
-func CrossBuildGoDaemon() error {
-	return mage.CrossBuildGoDaemon()
-}
-
-// Clean cleans all generated files and build artifacts.
-func Clean() error {
-	return mage.Clean()
-}
-
-// Package packages the Beat for distribution.
-// Use SNAPSHOT=true to build snapshots.
-// Use PLATFORMS to control the target platforms.
-func Package() {
-	start := time.Now()
-	defer func() { fmt.Println("package ran for", time.Since(start)) }()
-
-	mage.UseElasticBeatPackaging()
-	mg.Deps(Update)
-	mg.Deps(CrossBuild, CrossBuildGoDaemon)
-	mg.SerialDeps(mage.Package, TestPackages)
-}
-
-// TestPackages tests the generated packages (i.e. file modes, owners, groups).
-func TestPackages() error {
-	return mage.TestPackages()
-}
-
-// Update updates the generated files (aka make update).
-func Update() error {
-	return sh.Run("make", "update")
-}
+// GoTestUnit is an alias for goUnitTest.
+//
+// TODO: dev-tools/jenkins_ci.ps1 uses this. This should be removed when all
+// projects have update to use goUnitTest.
+func GoTestUnit() { mg.Deps(unittest.GoUnitTest) }

@@ -22,17 +22,20 @@ package eventlog
 import (
 	"fmt"
 	"io"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/winlogbeat/checkpoint"
-	"github.com/elastic/beats/winlogbeat/sys"
-	win "github.com/elastic/beats/winlogbeat/sys/wineventlog"
 	"github.com/joeshaw/multierror"
 	"github.com/pkg/errors"
 	"golang.org/x/sys/windows"
+
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/winlogbeat/checkpoint"
+	"github.com/elastic/beats/v7/winlogbeat/sys"
+	win "github.com/elastic/beats/v7/winlogbeat/sys/wineventlog"
 )
 
 const (
@@ -44,16 +47,49 @@ const (
 	winEventLogAPIName = "wineventlog"
 )
 
-var winEventLogConfigKeys = append(commonConfigKeys, "batch_read_size",
-	"ignore_older", "include_xml", "event_id", "forwarded", "level", "provider")
+var winEventLogConfigKeys = common.MakeStringSet(append(commonConfigKeys,
+	"batch_read_size", "ignore_older", "include_xml", "event_id", "forwarded",
+	"level", "provider", "no_more_events")...)
 
 type winEventLogConfig struct {
 	ConfigCommon  `config:",inline"`
-	BatchReadSize int   `config:"batch_read_size"` // Maximum number of events that Read will return.
-	IncludeXML    bool  `config:"include_xml"`
-	Forwarded     *bool `config:"forwarded"`
-	SimpleQuery   query `config:",inline"`
+	BatchReadSize int                `config:"batch_read_size"` // Maximum number of events that Read will return.
+	IncludeXML    bool               `config:"include_xml"`
+	Forwarded     *bool              `config:"forwarded"`
+	SimpleQuery   query              `config:",inline"`
+	NoMoreEvents  NoMoreEventsAction `config:"no_more_events"` // Action to take when no more events are available - wait or stop.
 }
+
+// NoMoreEventsAction defines what action for the reader to take when
+// ERROR_NO_MORE_ITEMS is returned by the Windows API.
+type NoMoreEventsAction uint8
+
+const (
+	// Wait for new events.
+	Wait NoMoreEventsAction = iota
+	// Stop the reader.
+	Stop
+)
+
+var noMoreEventsActionNames = map[NoMoreEventsAction]string{
+	Wait: "wait",
+	Stop: "stop",
+}
+
+// Unpack sets the action based on the string value.
+func (a *NoMoreEventsAction) Unpack(v string) error {
+	v = strings.ToLower(v)
+	for action, name := range noMoreEventsActionNames {
+		if v == name {
+			*a = action
+			return nil
+		}
+	}
+	return errors.Errorf("invalid no_more_events action: %v", v)
+}
+
+// String returns the name of the action.
+func (a NoMoreEventsAction) String() string { return noMoreEventsActionNames[a] }
 
 // defaultWinEventLogConfig is the default configuration for new wineventlog readers.
 var defaultWinEventLogConfig = winEventLogConfig{
@@ -89,6 +125,7 @@ type winEventLog struct {
 	config       winEventLogConfig
 	query        string
 	channelName  string                   // Name of the channel from which to read.
+	file         bool                     // Reading from file rather than channel.
 	subscription win.EvtHandle            // Handle to the subscription.
 	maxRead      int                      // Maximum number returned in one Read.
 	lastRead     checkpoint.EventLogState // Record number of the last read event.
@@ -108,6 +145,13 @@ func (l *winEventLog) Name() string {
 }
 
 func (l *winEventLog) Open(state checkpoint.EventLogState) error {
+	if l.file {
+		return l.openFile(state, bookmark)
+	}
+	return l.OpenChannel(state)
+}
+
+func (l *winEventLog) openChannel(bookmark win.EvtHandle) error {
 	var err error
 
 	flags := win.EvtSubscribeToFutureEvents
@@ -136,6 +180,17 @@ func (l *winEventLog) Open(state checkpoint.EventLogState) error {
 	}
 
 	l.subscription = subscriptionHandle
+	return nil
+}
+
+func (l *winEventLog) openFile(state checkpoint.EventLogState, bookmark win.EvtHandle) error {
+	path := l.channelName
+
+	h, err := win.EvtQuery(0, path, l.query, win.EvtQueryChannelPath|win.EvtQueryReverseDirection)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get handle to event log file %v", path)
+	}
+	l.subscription = h
 	return nil
 }
 
@@ -194,7 +249,6 @@ func (l *winEventLog) Read() ([]Record, error) {
 func (l *winEventLog) Close() error {
 	debugf("%s Closing handle", l.logPrefix)
 	windows.SetEvent(l.evt)
-	//windows.CloseHandle(l.evt)
 	return win.Close(l.subscription)
 }
 
@@ -241,10 +295,10 @@ func (l *winEventLog) buildRecordFromXML(x []byte, recoveredErr error) (Record, 
 
 	if e.RenderErrorCode != 0 {
 		// Convert the render error code to an error message that can be
-		// included in the "message_error" field.
-		e.RenderErr = syscall.Errno(e.RenderErrorCode).Error()
+		// included in the "error.message" field.
+		e.RenderErr = append(e.RenderErr, syscall.Errno(e.RenderErrorCode).Error())
 	} else if recoveredErr != nil {
-		e.RenderErr = recoveredErr.Error()
+		e.RenderErr = append(e.RenderErr, recoveredErr.Error())
 	}
 
 	if e.Level == "" {
@@ -259,6 +313,10 @@ func (l *winEventLog) buildRecordFromXML(x []byte, recoveredErr error) (Record, 
 	r := Record{
 		API:   winEventLogAPIName,
 		Event: e,
+	}
+
+	if l.file {
+		r.File = l.channelName
 	}
 
 	if l.config.IncludeXML {
@@ -307,10 +365,15 @@ func newWinEventLog(options *common.Config) (EventLog, error) {
 		return win.Close(win.EvtHandle(handle))
 	}
 
+	if filepath.IsAbs(c.Name) {
+		c.Name = filepath.Clean(c.Name)
+	}
+
 	l := &winEventLog{
 		config:      c,
 		query:       query,
 		channelName: c.Name,
+		file:        filepath.IsAbs(c.Name),
 		maxRead:     c.BatchReadSize,
 		renderBuf:   make([]byte, renderBufferSize),
 		outputBuf:   sys.NewByteBuffer(renderBufferSize),
