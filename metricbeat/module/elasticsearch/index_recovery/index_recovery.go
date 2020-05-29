@@ -18,16 +18,14 @@
 package index_recovery
 
 import (
-	"fmt"
+	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/common/cfgwarn"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/metricbeat/mb"
-	"github.com/elastic/beats/metricbeat/module/elasticsearch"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/module/elasticsearch"
 )
 
 func init() {
-	mb.Registry.MustAddMetricSet("elasticsearch", "index_recovery", New,
+	mb.Registry.MustAddMetricSet(elasticsearch.ModuleName, "index_recovery", New,
 		mb.WithHostParser(elasticsearch.HostParser),
 		mb.WithNamespace("elasticsearch.index.recovery"),
 	)
@@ -40,24 +38,23 @@ const (
 // MetricSet type defines all fields of the MetricSet
 type MetricSet struct {
 	*elasticsearch.MetricSet
-	recoveryPath string
 }
 
 // New create a new instance of the MetricSet
 func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
-	cfgwarn.Experimental("The elasticsearch index_recovery metricset is experimental")
-
 	config := struct {
 		ActiveOnly bool `config:"index_recovery.active_only"`
+		XPack      bool `config:"xpack.enabled"`
 	}{
 		ActiveOnly: true,
+		XPack:      false,
 	}
 	if err := base.Module().UnpackConfig(&config); err != nil {
 		return nil, err
 	}
 
 	localRecoveryPath := recoveryPath
-	if config.ActiveOnly {
+	if !config.XPack && config.ActiveOnly {
 		localRecoveryPath = localRecoveryPath + "?active_only=true"
 	}
 
@@ -65,32 +62,44 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &MetricSet{MetricSet: ms, recoveryPath: localRecoveryPath}, nil
+	return &MetricSet{MetricSet: ms}, nil
 }
 
 // Fetch gathers stats for each index from the _stats API
-func (m *MetricSet) Fetch(r mb.ReporterV2) {
-
-	isMaster, err := elasticsearch.IsMaster(m.HTTP, m.HostData().SanitizedURI+m.recoveryPath)
+func (m *MetricSet) Fetch(r mb.ReporterV2) error {
+	isMaster, err := elasticsearch.IsMaster(m.HTTP, m.GetServiceURI())
 	if err != nil {
-		r.Error(fmt.Errorf("Error fetch master info: %s", err))
-		return
+		return errors.Wrap(err, "error determining if connected Elasticsearch node is master")
 	}
 
 	// Not master, no event sent
 	if !isMaster {
-		logp.Debug("elasticsearch", "Trying to fetch index recovery stats from a non master node.")
-		return
+		m.Logger().Debug("trying to fetch index recovery stats from a non-master node")
+		return nil
+	}
+
+	info, err := elasticsearch.GetInfo(m.HTTP, m.GetServiceURI())
+	if err != nil {
+		return err
 	}
 
 	content, err := m.HTTP.FetchContent()
 	if err != nil {
-		r.Error(err)
-		return
+		return err
 	}
 
-	err = eventsMapping(r, content)
-	if err != nil {
-		r.Error(err)
+	if m.MetricSet.XPack {
+		err = eventsMappingXPack(r, m, *info, content)
+		if err != nil {
+			// Since this is an x-pack code path, we log the error but don't
+			// return it. Otherwise it would get reported into `metricbeat-*`
+			// indices.
+			m.Logger().Error(err)
+			return nil
+		}
+	} else {
+		return eventsMapping(r, *info, content)
 	}
+
+	return nil
 }

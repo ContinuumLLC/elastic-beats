@@ -18,66 +18,116 @@
 package node_stats
 
 import (
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/cfgwarn"
-	"github.com/elastic/beats/metricbeat/helper"
-	"github.com/elastic/beats/metricbeat/mb"
-	"github.com/elastic/beats/metricbeat/mb/parse"
-)
+	"net/url"
 
-const (
-	moduleName    = "logstash"
-	metricsetName = "node_stats"
-	namespace     = "logstash.node.stats"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/mb/parse"
+	"github.com/elastic/beats/v7/metricbeat/module/logstash"
 )
 
 // init registers the MetricSet with the central registry.
 // The New method will be called after the setup of the module and before starting to fetch data
 func init() {
-	mb.Registry.MustAddMetricSet(moduleName, metricsetName, New,
+	mb.Registry.MustAddMetricSet(logstash.ModuleName, "node_stats", New,
 		mb.WithHostParser(hostParser),
-		mb.WithNamespace(namespace),
+		mb.WithNamespace("logstash.node.stats"),
 		mb.DefaultMetricSet(),
 	)
 }
+
+const (
+	nodeStatsPath = "/_node/stats"
+)
 
 var (
 	hostParser = parse.URLHostParserBuilder{
 		DefaultScheme: "http",
 		PathConfigKey: "path",
-		DefaultPath:   "_node/stats",
+		DefaultPath:   nodeStatsPath,
 	}.Build()
 )
 
 // MetricSet type defines all fields of the MetricSet
 type MetricSet struct {
-	mb.BaseMetricSet
-	http *helper.HTTP
+	*logstash.MetricSet
 }
 
 // New create a new instance of the MetricSet
 func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
-	cfgwarn.Beta("The logstash node_stats metricset is beta")
-
-	http, err := helper.NewHTTP(base)
+	ms, err := logstash.NewMetricSet(base)
 	if err != nil {
 		return nil, err
 	}
+
 	return &MetricSet{
-		base,
-		http,
+		MetricSet: ms,
 	}, nil
 }
 
 // Fetch methods implements the data gathering and data conversion to the right format
 // It returns the event which is then forward to the output. In case of an error, a
 // descriptive error must be returned.
-func (m *MetricSet) Fetch() (common.MapStr, error) {
-	data, err := m.http.FetchJSON()
-	if err != nil {
-		return nil, err
+func (m *MetricSet) Fetch(r mb.ReporterV2) error {
+	if err := m.updateServiceURI(); err != nil {
+		if m.XPack {
+			m.Logger().Error(err)
+			return nil
+		}
+		return err
 	}
 
-	event, _ := eventMapping(data)
-	return event, nil
+	content, err := m.HTTP.FetchContent()
+	if err != nil {
+		if m.XPack {
+			m.Logger().Error(err)
+			return nil
+		}
+		return err
+	}
+
+	if !m.XPack {
+		return eventMapping(r, content)
+	}
+
+	err = eventMappingXPack(r, m, content)
+	if err != nil {
+		m.Logger().Error(err)
+	}
+
+	return nil
+}
+
+func (m *MetricSet) updateServiceURI() error {
+	u, err := getServiceURI(m.GetURI(), m.XPack, m.CheckPipelineGraphAPIsAvailable)
+	if err != nil {
+		return err
+	}
+
+	m.HTTP.SetURI(u)
+	return nil
+
+}
+
+func getServiceURI(currURI string, xpackEnabled bool, graphAPIsAvailable func() error) (string, error) {
+	if !xpackEnabled {
+		// No need to request pipeline vertices from service API
+		return currURI, nil
+	}
+
+	if err := graphAPIsAvailable(); err != nil {
+		return "", err
+	}
+
+	u, err := url.Parse(currURI)
+	if err != nil {
+		return "", err
+	}
+
+	q := u.Query()
+	if q.Get("vertices") == "" {
+		q.Set("vertices", "true")
+	}
+
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }

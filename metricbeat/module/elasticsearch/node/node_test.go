@@ -26,39 +26,52 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	mbtest "github.com/elastic/beats/metricbeat/mb/testing"
+	mbtest "github.com/elastic/beats/v7/metricbeat/mb/testing"
+	"github.com/elastic/beats/v7/metricbeat/module/elasticsearch"
 )
 
 func TestFetch(t *testing.T) {
 
 	files, err := filepath.Glob("./_meta/test/node.*.json")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	// Makes sure glob matches at least 1 file
-	assert.True(t, len(files) > 0)
+	require.True(t, len(files) > 0)
 
 	for _, f := range files {
 		t.Run(f, func(t *testing.T) {
 			response, err := ioutil.ReadFile(f)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(200)
-				w.Header().Set("Content-Type", "application/json;")
-				w.Write([]byte(response))
-				assert.Equal(t, "/_nodes/_local", r.RequestURI)
+				switch r.RequestURI {
+				case "/_nodes/_local":
+					w.WriteHeader(200)
+					w.Header().Set("Content-Type", "application/json;")
+					w.Write([]byte(response))
+
+				case "/":
+					rootResponse := "{\"cluster_name\":\"es1\",\"cluster_uuid\":\"4heb1eiady103dxu71\",\"version\":{\"number\":\"7.0.0\"}}"
+					w.WriteHeader(200)
+					w.Header().Set("Content-Type", "application/json")
+					w.Write([]byte(rootResponse))
+
+				default:
+					t.FailNow()
+				}
+
 			}))
 			defer server.Close()
 
 			config := map[string]interface{}{
-				"module":     "elasticsearch",
+				"module":     elasticsearch.ModuleName,
 				"metricsets": []string{"node"},
 				"hosts":      []string{server.URL},
 			}
 			reporter := &mbtest.CapturingReporterV2{}
 
-			metricSet := mbtest.NewReportingMetricSetV2(t, config)
+			metricSet := mbtest.NewReportingMetricSetV2Error(t, config)
 			metricSet.Fetch(reporter)
 
 			e := mbtest.StandardizeEvent(metricSet, reporter.GetEvents()[0])

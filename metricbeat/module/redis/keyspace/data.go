@@ -20,21 +20,22 @@ package keyspace
 import (
 	"strings"
 
-	"github.com/elastic/beats/libbeat/common"
-	s "github.com/elastic/beats/libbeat/common/schema"
-	c "github.com/elastic/beats/libbeat/common/schema/mapstrstr"
-	"github.com/elastic/beats/metricbeat/module/redis"
+	"github.com/elastic/beats/v7/libbeat/common"
+	s "github.com/elastic/beats/v7/libbeat/common/schema"
+	c "github.com/elastic/beats/v7/libbeat/common/schema/mapstrstr"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/module/redis"
 )
 
 // Map data to MapStr
-func eventsMapping(info map[string]string) []common.MapStr {
-	events := []common.MapStr{}
+func eventsMapping(r mb.ReporterV2, info map[string]string) {
 	for key, space := range getKeyspaceStats(info) {
 		space["id"] = key
-		events = append(events, space)
+		event := mb.Event{
+			MetricSetFields: space,
+		}
+		r.Event(event)
 	}
-
-	return events
 }
 
 func getKeyspaceStats(info map[string]string) map[string]common.MapStr {

@@ -20,16 +20,17 @@
 package munin
 
 import (
-	"github.com/elastic/beats/libbeat/asset"
+	"github.com/elastic/beats/v7/libbeat/asset"
 )
 
 func init() {
-	if err := asset.SetFields("metricbeat", "munin", Asset); err != nil {
+	if err := asset.SetFields("metricbeat", "munin", asset.ModuleFieldsPri, AssetMunin); err != nil {
 		panic(err)
 	}
 }
 
-// Asset returns asset data
-func Asset() string {
-	return "eJxszkFqxiAUBOC9pxiyzwVc9AY9QenCxml4VJ+iL9DcvsQE+gfydg4z8s344e6RNxV1gIklekzvx3tyQGRfmlSToh5vDgD4W9kkUy2kj083stGHlkhkWpOlH7XSjM0BjYmh09+mDvgWptj9+GGGhsx/yXG2V3qsrWz1Sh44540ZlqIWRPsN0RnxtSNcnYEMK9Wu+avilDx7/wIAAP//QeFdrA=="
+// AssetMunin returns asset data.
+// This is the base64 encoded gzipped contents of ../metricbeat/module/munin.
+func AssetMunin() string {
+	return "eJx8kUFuwyAURPc+xSibSJHiA7DoDdorRNhMKA0GBN9qffvKhlaOanX5Z/5oHp8rHlwUpjm40AHixFPh9LrOpw4wLGN2SVwMCi8dAGweQjTERMluLOBXilmYOyDTUxcqWN0Bd0dvitpyVwQ9sXX1LdpfNg+QJVEhDh8cpUl1uFXHxHnw/OvcJp2SC7atnS/ntnNAvtHvkAsNhgUayc/WBcQ7dMWrz9OWQfoD+Lrfr9IT/oPLZ8zmf4I3PXGtknf+FI/Re47igl3V8nvYg+6nPpvjnJqyP3VN7b/iOwAA//84wJVl"
 }

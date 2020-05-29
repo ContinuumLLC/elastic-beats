@@ -22,8 +22,8 @@ import (
 
 	"strconv"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 type NodeSystemStats struct {
@@ -77,7 +77,7 @@ func eventsMapping(content []byte) []common.MapStr {
 	var d Data
 	err := json.Unmarshal(content, &d)
 	if err != nil {
-		logp.Err("Error: ", err)
+		logp.Err("Error: %+v", err)
 	}
 
 	events := []common.MapStr{}

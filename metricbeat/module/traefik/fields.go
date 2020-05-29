@@ -20,16 +20,17 @@
 package traefik
 
 import (
-	"github.com/elastic/beats/libbeat/asset"
+	"github.com/elastic/beats/v7/libbeat/asset"
 )
 
 func init() {
-	if err := asset.SetFields("metricbeat", "traefik", Asset); err != nil {
+	if err := asset.SetFields("metricbeat", "traefik", asset.ModuleFieldsPri, AssetTraefik); err != nil {
 		panic(err)
 	}
 }
 
-// Asset returns asset data
-func Asset() string {
-	return "eJy00TFP8zAQBuA9v+JVl2/qx54BqSMDCCGYK8e+pKaJzzo7Ff33yGnauiEqFYgbfbHvyXtLbGlfIoqi2m4LINrYUonFeLIoAENBi/XRsitxXwDA66ELoR1JIHjhjz3u0LIyqFSrnCZBR1GsDgVQW2pNKIe7SzjVUT4zVdx7KtEI9348mRn7k9Gp8vE5YUOqjZvT8ZziiiTV42EOuIrKOjKohbuj8V8YJ2D1/AByxrN1Mbs/deW23kfb0f9A+qJ9NLbsmknjCjPV2/AguD5FaF2IKS5Yh0CanQmzFKHg2QWahUzDukHyMr432dK1VHKO5v4ixW+DuYGU6qnvKpIU0PGHp7KzQe2a9bCf/us3v5esdiSqoZMDw+asQ2e18NyqcluIKvZhrdlMN3a2cfVOei7EQ2P9B1nCk4w2DLbPAAAA///IQi90"
+// AssetTraefik returns asset data.
+// This is the base64 encoded gzipped contents of ../metricbeat/module/traefik.
+func AssetTraefik() string {
+	return "eJy00bFu2zAQBuBdT/HDS4ECdncNBTx2aFEUzWxQ1ElmLPGIO8qI3z6gLDmyojhGgtzIo3if/lvjQKccUQxV7pAB0cWGcqz+n09WGVCSWnEhOvY5fmYAMHQhdCRRQhB+OuEHGjYlCtMYb0nQUhRnNQOEGjJKOWqTAZWjptS8f2kNb1qaClLFU0iXhbswnCwgPgJJNR0/JezJNHF/OV5S3JCk+n2eAy6icZ5KVMLtaPymwwRs//4C+TKw83Hy/XVIY821U3EXomtpo2Sv2qO8YV/PGjfwqR76B8HVJVjnNaYQ4TyULPtSFylCGtgrLULmEd4h+Te8N9vdrVSmHMvdVbbvBnMHKdWfri1IUkDjD89lLwZzrHf9frrXdz4v2R5JTE0XB/rNOY/WWeGlVU1tGk3sdGe5JN18f5PHxSPZpRzPjd0XxIlAMvCQeNlzAAAA///Q4jm5"
 }

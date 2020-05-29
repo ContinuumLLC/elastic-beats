@@ -22,31 +22,22 @@ package status
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/elastic/beats/libbeat/tests/compose"
-	mbtest "github.com/elastic/beats/metricbeat/mb/testing"
-	"github.com/elastic/beats/metricbeat/module/kibana/mtest"
+	"github.com/elastic/beats/v7/libbeat/tests/compose"
+	mbtest "github.com/elastic/beats/v7/metricbeat/mb/testing"
+	"github.com/elastic/beats/v7/metricbeat/module/kibana/mtest"
 )
 
 func TestFetch(t *testing.T) {
-	compose.EnsureUpWithTimeout(t, 600, "elasticsearch", "kibana")
+	service := compose.EnsureUpWithTimeout(t, 570, "kibana")
 
-	f := mbtest.NewEventFetcher(t, mtest.GetConfig("status"))
-	event, err := f.Fetch()
-	if !assert.NoError(t, err) {
-		t.FailNow()
-	}
+	f := mbtest.NewReportingMetricSetV2Error(t, mtest.GetConfig("status", service.Host(), false))
+	events, errs := mbtest.ReportingFetchV2Error(f)
 
-	t.Logf("%s/%s event: %+v", f.Module().Name(), f.Name(), event)
-}
+	require.Empty(t, errs)
+	require.NotEmpty(t, events)
 
-func TestData(t *testing.T) {
-	compose.EnsureUp(t, "elasticsearch", "kibana")
-
-	f := mbtest.NewEventFetcher(t, mtest.GetConfig("status"))
-	err := mbtest.WriteEvent(f, t)
-	if err != nil {
-		t.Fatal("write", err)
-	}
+	t.Logf("%s/%s event: %+v", f.Module().Name(), f.Name(),
+		events[0].BeatEvent("kibana", "status").Fields.StringToPrint())
 }

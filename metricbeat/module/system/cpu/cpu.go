@@ -24,10 +24,10 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/metric/system/cpu"
-	"github.com/elastic/beats/metricbeat/mb"
-	"github.com/elastic/beats/metricbeat/mb/parse"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/metric/system/cpu"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/mb/parse"
 )
 
 func init() {
@@ -63,10 +63,10 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 }
 
 // Fetch fetches CPU metrics from the OS.
-func (m *MetricSet) Fetch() (common.MapStr, error) {
+func (m *MetricSet) Fetch(r mb.ReporterV2) error {
 	sample, err := m.cpu.Sample()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to fetch CPU times")
+		return errors.Wrap(err, "failed to fetch CPU times")
 	}
 
 	event := common.MapStr{"cores": cpu.NumCores}
@@ -108,5 +108,9 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 		}
 	}
 
-	return event, nil
+	r.Event(mb.Event{
+		MetricSetFields: event,
+	})
+
+	return nil
 }

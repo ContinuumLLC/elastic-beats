@@ -20,16 +20,17 @@
 package jolokia
 
 import (
-	"github.com/elastic/beats/libbeat/asset"
+	"github.com/elastic/beats/v7/libbeat/asset"
 )
 
 func init() {
-	if err := asset.SetFields("metricbeat", "jolokia", Asset); err != nil {
+	if err := asset.SetFields("metricbeat", "jolokia", asset.ModuleFieldsPri, AssetJolokia); err != nil {
 		panic(err)
 	}
 }
 
-// Asset returns asset data
-func Asset() string {
-	return "eJxsjkFuBCEMBO+8osV9P8AhD8gXoihC4CHOMhhhb5T5fUQGRXPYPrbdpbrhTkfAl1S5c3SAsVUK8K9n4x2QSdPgbiwt4MUBwLpil/yo5AD9lGEfSdrGJWCLVWc7qFJUCigTrWTGrWjAm1et/t0BG1PNGv6gN7S401Vmxo4+AUMefTVPfM6sIZI0i9wUO9ngpKCfLkoZ3xz/n2KhZmt8tThNrua/AQAA//9JPFm3"
+// AssetJolokia returns asset data.
+// This is the base64 encoded gzipped contents of ../metricbeat/module/jolokia.
+func AssetJolokia() string {
+	return "eJx8kFFOwzAQRP99ipG/6QX8wQG4AkLISjbptrbX8m5RensUkoARqPM5uzN6mhOudA+4SJIrRwcYW6IA/7I53gEj6dC4GksJeHYAsF+RZbwlcoCepdn7IGXiOWCKSVe3UaKoFDCv1UpmXGYNePWqyT/Bn82qf3PAxJRGDV/lJ5SYqYdaZfe6FjW51d35h2vTHsQgxSIXRSZrPChoqaI04oPj91Ocqdge7ik2km2dvHTtf0EewvyMdcnLQULWffxe6dDB8hkAAP//TGJ6CQ=="
 }

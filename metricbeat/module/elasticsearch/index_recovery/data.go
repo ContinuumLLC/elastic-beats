@@ -20,10 +20,15 @@ package index_recovery
 import (
 	"encoding/json"
 
-	"github.com/elastic/beats/libbeat/common"
-	s "github.com/elastic/beats/libbeat/common/schema"
-	c "github.com/elastic/beats/libbeat/common/schema/mapstriface"
-	"github.com/elastic/beats/metricbeat/mb"
+	"github.com/joeshaw/multierror"
+	"github.com/pkg/errors"
+
+	"github.com/elastic/beats/v7/libbeat/common"
+	s "github.com/elastic/beats/v7/libbeat/common/schema"
+	c "github.com/elastic/beats/v7/libbeat/common/schema/mapstriface"
+	"github.com/elastic/beats/v7/metricbeat/helper/elastic"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/module/elasticsearch"
 )
 
 var (
@@ -50,29 +55,41 @@ var (
 	}
 )
 
-func eventsMapping(r mb.ReporterV2, content []byte) error {
+func eventsMapping(r mb.ReporterV2, info elasticsearch.Info, content []byte) error {
 
 	var data map[string]map[string][]map[string]interface{}
 
 	err := json.Unmarshal(content, &data)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failure parsing Elasticsearch Recovery API response")
 	}
 
+	var errs multierror.Errors
 	for indexName, d := range data {
 		shards, ok := d["shards"]
 		if !ok {
+			errs = append(errs, elastic.MakeErrorForMissingField(indexName+".shards", elastic.Elasticsearch))
 			continue
 		}
 		for _, data := range shards {
 			event := mb.Event{}
-			event.ModuleFields = common.MapStr{}
-			event.MetricSetFields, _ = schema.Apply(data)
-			event.ModuleFields.Put("index.name", indexName)
+
 			event.RootFields = common.MapStr{}
-			event.RootFields.Put("service.name", "elasticsearch")
+			event.RootFields.Put("service.name", elasticsearch.ModuleName)
+
+			event.ModuleFields = common.MapStr{}
+			event.ModuleFields.Put("cluster.name", info.ClusterName)
+			event.ModuleFields.Put("cluster.id", info.ClusterID)
+			event.ModuleFields.Put("index.name", indexName)
+
+			event.MetricSetFields, err = schema.Apply(data)
+			if err != nil {
+				errs = append(errs, errors.Wrap(err, "failure applying shard schema"))
+				continue
+			}
+
 			r.Event(event)
 		}
 	}
-	return nil
+	return errs.Err()
 }

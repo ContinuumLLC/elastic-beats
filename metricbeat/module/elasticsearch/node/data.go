@@ -21,11 +21,13 @@ import (
 	"encoding/json"
 
 	"github.com/joeshaw/multierror"
+	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/common"
-	s "github.com/elastic/beats/libbeat/common/schema"
-	c "github.com/elastic/beats/libbeat/common/schema/mapstriface"
-	"github.com/elastic/beats/metricbeat/mb"
+	"github.com/elastic/beats/v7/libbeat/common"
+	s "github.com/elastic/beats/v7/libbeat/common/schema"
+	c "github.com/elastic/beats/v7/libbeat/common/schema/mapstriface"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/module/elasticsearch"
 )
 
 var (
@@ -59,7 +61,7 @@ var (
 	}
 )
 
-func eventsMapping(r mb.ReporterV2, content []byte) error {
+func eventsMapping(r mb.ReporterV2, info elasticsearch.Info, content []byte) error {
 	nodesStruct := struct {
 		ClusterName string                            `json:"cluster_name"`
 		Nodes       map[string]map[string]interface{} `json:"nodes"`
@@ -67,33 +69,30 @@ func eventsMapping(r mb.ReporterV2, content []byte) error {
 
 	err := json.Unmarshal(content, &nodesStruct)
 	if err != nil {
-		r.Error(err)
-		return err
+		return errors.Wrap(err, "failure parsing Elasticsearch Node Stats API response")
 	}
 
 	var errs multierror.Errors
-	for name, node := range nodesStruct.Nodes {
+	for id, node := range nodesStruct.Nodes {
 		event := mb.Event{}
-		event.MetricSetFields, err = eventMapping(node)
-		if err != nil {
-			errs = append(errs, err)
-		}
 
-		// Write name here as full name only available as key
-		event.MetricSetFields["name"] = name
+		event.RootFields = common.MapStr{}
+		event.RootFields.Put("service.name", elasticsearch.ModuleName)
 
 		event.ModuleFields = common.MapStr{}
 		event.ModuleFields.Put("cluster.name", nodesStruct.ClusterName)
+		event.ModuleFields.Put("cluster.id", info.ClusterID)
 
-		event.RootFields = common.MapStr{}
-		event.RootFields.Put("service.name", "elasticsearch")
+		event.MetricSetFields, err = schema.Apply(node)
+		if err != nil {
+			errs = append(errs, errors.Wrap(err, "failure applying node schema"))
+			continue
+		}
+
+		event.MetricSetFields["id"] = id
 
 		r.Event(event)
 	}
 
 	return errs.Err()
-}
-
-func eventMapping(node map[string]interface{}) (common.MapStr, error) {
-	return schema.Apply(node)
 }

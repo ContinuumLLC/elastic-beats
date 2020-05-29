@@ -20,11 +20,13 @@ package index_summary
 import (
 	"encoding/json"
 
-	"github.com/elastic/beats/libbeat/common"
-	s "github.com/elastic/beats/libbeat/common/schema"
-	c "github.com/elastic/beats/libbeat/common/schema/mapstriface"
-	"github.com/elastic/beats/metricbeat/mb"
-	"github.com/elastic/beats/metricbeat/module/elasticsearch"
+	"github.com/pkg/errors"
+
+	"github.com/elastic/beats/v7/libbeat/common"
+	s "github.com/elastic/beats/v7/libbeat/common/schema"
+	c "github.com/elastic/beats/v7/libbeat/common/schema/mapstriface"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/module/elasticsearch"
 )
 
 var (
@@ -67,33 +69,30 @@ var (
 )
 
 func eventMapping(r mb.ReporterV2, info elasticsearch.Info, content []byte) error {
+	var event mb.Event
+	event.RootFields = common.MapStr{}
+	event.RootFields.Put("service.name", elasticsearch.ModuleName)
+
+	event.ModuleFields = common.MapStr{}
+	event.ModuleFields.Put("cluster.name", info.ClusterName)
+	event.ModuleFields.Put("cluster.id", info.ClusterID)
+
 	var all struct {
 		Data map[string]interface{} `json:"_all"`
 	}
 
 	err := json.Unmarshal(content, &all)
 	if err != nil {
-		r.Error(err)
-		return err
+		return errors.Wrap(err, "failure parsing Elasticsearch Stats API response")
 	}
 
 	fields, err := schema.Apply(all.Data, s.FailOnRequired)
 	if err != nil {
-		r.Error(err)
-		return err
+		return errors.Wrap(err, "failure applying stats schema")
 	}
-
-	var event mb.Event
-	event.RootFields = common.MapStr{}
-	event.RootFields.Put("service.name", "elasticsearch")
-
-	event.ModuleFields = common.MapStr{}
-	event.ModuleFields.Put("cluster.name", info.ClusterName)
-	event.ModuleFields.Put("cluster.id", info.ClusterID)
 
 	event.MetricSetFields = fields
 
 	r.Event(event)
-
 	return nil
 }

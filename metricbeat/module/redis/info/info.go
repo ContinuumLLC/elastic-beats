@@ -18,67 +18,76 @@
 package info
 
 import (
-	"time"
+	"strconv"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/metricbeat/mb"
-	"github.com/elastic/beats/metricbeat/mb/parse"
-	"github.com/elastic/beats/metricbeat/module/redis"
+	"github.com/pkg/errors"
 
-	rd "github.com/garyburd/redigo/redis"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/mb/parse"
+	"github.com/elastic/beats/v7/metricbeat/module/redis"
 )
 
-var (
-	debugf = logp.MakeDebug("redis-info")
-)
+var hostParser = parse.URLHostParserBuilder{DefaultScheme: "redis"}.Build()
 
 func init() {
 	mb.Registry.MustAddMetricSet("redis", "info", New,
-		mb.WithHostParser(parse.PassThruHostParser),
+		mb.WithHostParser(hostParser),
 		mb.DefaultMetricSet(),
 	)
 }
 
 // MetricSet for fetching Redis server information and statistics.
 type MetricSet struct {
-	mb.BaseMetricSet
-	pool *rd.Pool
+	*redis.MetricSet
 }
 
 // New creates new instance of MetricSet
 func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
-	// Unpack additional configuration options.
-	config := struct {
-		IdleTimeout time.Duration `config:"idle_timeout"`
-		Network     string        `config:"network"`
-		MaxConn     int           `config:"maxconn" validate:"min=1"`
-		Password    string        `config:"password"`
-	}{
-		Network:  "tcp",
-		MaxConn:  10,
-		Password: "",
-	}
-	err := base.Module().UnpackConfig(&config)
+	ms, err := redis.NewMetricSet(base)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to create 'info' metricset")
 	}
-
-	return &MetricSet{
-		BaseMetricSet: base,
-		pool: redis.CreatePool(base.Host(), config.Password, config.Network,
-			config.MaxConn, config.IdleTimeout, base.Module().Config().Timeout),
-	}, nil
+	return &MetricSet{ms}, nil
 }
 
 // Fetch fetches metrics from Redis by issuing the INFO command.
-func (m *MetricSet) Fetch() (common.MapStr, error) {
+func (m *MetricSet) Fetch(r mb.ReporterV2) error {
+	conn := m.Connection()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			m.Logger().Debug(errors.Wrapf(err, "failed to release connection"))
+		}
+	}()
+
 	// Fetch default INFO.
-	info, err := redis.FetchRedisInfo("default", m.pool.Get())
+	info, err := redis.FetchRedisInfo("default", conn)
 	if err != nil {
-		return nil, err
+		return errors.Wrap(err, "failed to fetch redis info")
 	}
 
-	debugf("Redis INFO from %s: %+v", m.Host(), info)
-	return eventMapping(info), nil
+	// In 5.0 some fields are renamed, maintain both names, old ones will be deprecated
+	renamings := []struct {
+		old, new string
+	}{
+		{"client_longest_output_list", "client_recent_max_output_buffer"},
+		{"client_biggest_input_buf", "client_recent_max_input_buffer"},
+	}
+	for _, r := range renamings {
+		if v, ok := info[r.new]; ok {
+			info[r.old] = v
+		} else {
+			info[r.new] = info[r.old]
+		}
+	}
+
+	slowLogLength, err := redis.FetchSlowLogLength(conn)
+	if err != nil {
+		return errors.Wrap(err, "failed to fetch slow log length")
+
+	}
+	info["slowlog_len"] = strconv.FormatInt(slowLogLength, 10)
+
+	m.Logger().Debugf("Redis INFO from %s: %+v", m.Host(), info)
+	eventMapping(r, info)
+	return nil
 }

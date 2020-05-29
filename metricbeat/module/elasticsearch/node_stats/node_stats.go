@@ -18,15 +18,14 @@
 package node_stats
 
 import (
-	"github.com/elastic/beats/libbeat/common/cfgwarn"
-	"github.com/elastic/beats/metricbeat/mb"
-	"github.com/elastic/beats/metricbeat/module/elasticsearch"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/module/elasticsearch"
 )
 
 // init registers the MetricSet with the central registry.
 // The New method will be called after the setup of the module and before starting to fetch data
 func init() {
-	mb.Registry.MustAddMetricSet("elasticsearch", "node_stats", New,
+	mb.Registry.MustAddMetricSet(elasticsearch.ModuleName, "node_stats", New,
 		mb.WithHostParser(elasticsearch.HostParser),
 		mb.DefaultMetricSet(),
 		mb.WithNamespace("elasticsearch.node.stats"),
@@ -44,8 +43,6 @@ type MetricSet struct {
 
 // New create a new instance of the MetricSet
 func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
-	cfgwarn.Beta("The elasticsearch node_stats metricset is beta")
-
 	// Get the stats from the local node
 	ms, err := elasticsearch.NewMetricSet(base, nodeStatsPath)
 	if err != nil {
@@ -55,16 +52,29 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 }
 
 // Fetch methods implements the data gathering and data conversion to the right format
-func (m *MetricSet) Fetch(r mb.ReporterV2) {
+func (m *MetricSet) Fetch(r mb.ReporterV2) error {
 	content, err := m.HTTP.FetchContent()
 	if err != nil {
-		r.Error(err)
-		return
+		return err
 	}
 
-	if m.MetricSet.XPack {
-		eventsMappingXPack(r, m, content)
-	} else {
-		eventsMapping(r, content)
+	info, err := elasticsearch.GetInfo(m.HTTP, m.GetServiceURI())
+	if err != nil {
+		return err
 	}
+
+	if m.XPack {
+		err = eventsMappingXPack(r, m, *info, content)
+		if err != nil {
+			// Since this is an x-pack code path, we log the error but don't
+			// return it. Otherwise it would get reported into `metricbeat-*`
+			// indices.
+			m.Logger().Error(err)
+			return nil
+		}
+	} else {
+		return eventsMapping(r, *info, content)
+	}
+
+	return nil
 }

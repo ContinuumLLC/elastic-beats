@@ -20,16 +20,17 @@
 package kvm
 
 import (
-	"github.com/elastic/beats/libbeat/asset"
+	"github.com/elastic/beats/v7/libbeat/asset"
 )
 
 func init() {
-	if err := asset.SetFields("metricbeat", "kvm", Asset); err != nil {
+	if err := asset.SetFields("metricbeat", "kvm", asset.ModuleFieldsPri, AssetKvm); err != nil {
 		panic(err)
 	}
 }
 
-// Asset returns asset data
-func Asset() string {
-	return "eJyskLFuwyAQhnee4lf2vABDp659gqoDKtcIwXEWxm799lXcUCXOBXcogwcOfd/nOyLSYhFnNkANNZHFIc58MICn8b2EoQbJFk8GAOhroBKYcnXp9c2sd3FmsPgpkQE+AiU/2nVwRHZMDX4+dRnI4lRkGi43iuMWcg3ywkw8Vld/RxrzIfcy0ihb5a1487gn3tX/nBdiKYsO1luue85fZdyaIi2fUrz6YrdsU/fI1VJml6ZeS5J8+p8QzdQqwv3PdvS76mdhF/I9tbv//u7/6lzR3wEAAP//jl7YkQ=="
+// AssetKvm returns asset data.
+// This is the base64 encoded gzipped contents of ../metricbeat/module/kvm.
+func AssetKvm() string {
+	return "eJyskDFuwzAMRXed4iN7LqChU7cia3e1YgPBomnIcgrdvnAaFYnCyB3CwYO//f4j9xioWAwnNkAOOZLF7u39sDNAokhuJosPys4AnubPFKYcZLR4MQDW/8Dil0gG+AoU/WzPwR6jY6rgdXKZyOKYZJkubxTeLeQa5IWZeM4u/0Ua8yH3EmmUds86rcqtUAPpCW1q/c6BWFLRwbrLtc/6VOLqNFD5luTVLzbNGrtHXVXl5OLSc4kyHp8jojVVi3C/bKd+s/pV2IXxntq9f//2/+08o38CAAD//4nj3Rk="
 }

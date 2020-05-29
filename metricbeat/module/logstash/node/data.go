@@ -18,13 +18,21 @@
 package node
 
 import (
-	"github.com/elastic/beats/libbeat/common"
-	s "github.com/elastic/beats/libbeat/common/schema"
-	c "github.com/elastic/beats/libbeat/common/schema/mapstriface"
+	"encoding/json"
+
+	"github.com/pkg/errors"
+
+	"github.com/elastic/beats/v7/libbeat/common"
+	s "github.com/elastic/beats/v7/libbeat/common/schema"
+	c "github.com/elastic/beats/v7/libbeat/common/schema/mapstriface"
+	"github.com/elastic/beats/v7/metricbeat/helper/elastic"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/module/logstash"
 )
 
 var (
 	schema = s.Schema{
+		"id":      c.Str("id"),
 		"host":    c.Str("host"),
 		"version": c.Str("version"),
 		"jvm": c.Dict("jvm", s.Schema{
@@ -34,6 +42,56 @@ var (
 	}
 )
 
-func eventMapping(node map[string]interface{}) (common.MapStr, error) {
-	return schema.Apply(node)
+func eventMapping(r mb.ReporterV2, content []byte) error {
+	event := mb.Event{}
+	event.RootFields = common.MapStr{}
+	event.RootFields.Put("service.name", logstash.ModuleName)
+
+	var data map[string]interface{}
+	err := json.Unmarshal(content, &data)
+	if err != nil {
+		return errors.Wrap(err, "failure parsing Logstash Node API response")
+	}
+
+	fields, err := schema.Apply(data)
+	if err != nil {
+		return errors.Wrap(err, "failure applying node schema")
+	}
+
+	// Set service ID
+	serviceID, err := fields.GetValue("id")
+	if err != nil {
+		return elastic.MakeErrorForMissingField("id", elastic.Logstash)
+	}
+	event.RootFields.Put("service.id", serviceID)
+	fields.Delete("id")
+
+	// Set service hostname
+	host, err := fields.GetValue("host")
+	if err != nil {
+		return elastic.MakeErrorForMissingField("host", elastic.Logstash)
+	}
+	event.RootFields.Put("service.hostname", host)
+	fields.Delete("host")
+
+	// Set service version
+	version, err := fields.GetValue("version")
+	if err != nil {
+		return elastic.MakeErrorForMissingField("version", elastic.Logstash)
+	}
+	event.RootFields.Put("service.version", version)
+	fields.Delete("version")
+
+	// Set PID
+	pid, err := fields.GetValue("jvm.pid")
+	if err != nil {
+		return elastic.MakeErrorForMissingField("jvm.pid", elastic.Logstash)
+	}
+	event.RootFields.Put("process.pid", pid)
+	fields.Delete("jvm.pid")
+
+	event.MetricSetFields = fields
+
+	r.Event(event)
+	return nil
 }

@@ -18,8 +18,8 @@
 package stats
 
 import (
-	s "github.com/elastic/beats/libbeat/common/schema"
-	c "github.com/elastic/beats/libbeat/common/schema/mapstrstr"
+	s "github.com/elastic/beats/v7/libbeat/common/schema"
+	c "github.com/elastic/beats/v7/libbeat/common/schema/mapstrstr"
 )
 
 var (
@@ -52,5 +52,9 @@ var (
 			"total":   c.Int("total_items"),
 		},
 		"evictions": c.Int("evictions"),
+		"bytes": s.Object{
+			"current": c.Int("bytes"),
+			"limit":   c.Int("limit_maxbytes"),
+		},
 	}
 )

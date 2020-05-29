@@ -2,6 +2,7 @@
   type: group
   description: >
     ml
+  release: ga
   fields:
     - name: id
       type: keyword

@@ -1,7 +1,8 @@
 - key: traefik
-  title: "traefik"
+  title: "Traefik"
   description: >
     Traefik reverse proxy / load balancer metrics
+  release: ga
   fields:
     - name: traefik
       type: group

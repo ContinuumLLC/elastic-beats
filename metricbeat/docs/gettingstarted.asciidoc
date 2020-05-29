@@ -1,10 +1,14 @@
 [id="{beatname_lc}-getting-started"]
-== Getting started with {beatname_uc}
+== Get started with {beatname_uc}
+
+++++
+<titleabbrev>Get started</titleabbrev>
+++++
 
 {beatname_uc} helps you monitor your servers and the services they host by
 collecting metrics from the operating system and services.
 
-include::../../libbeat/docs/shared-getting-started-intro.asciidoc[]
+include::{libbeat-dir}/shared-getting-started-intro.asciidoc[]
 
 * <<{beatname_lc}-installation>>
 * <<{beatname_lc}-configuration>>
@@ -25,14 +29,14 @@ traffic or prevent {beatname_uc} from collecting metrics when there are network
 problems. Metrics from multiple {beatname_uc} instances will be combined on the
 Elasticsearch server.
 
-include::../../libbeat/docs/shared-download-and-install.asciidoc[]
+include::{libbeat-dir}/shared-download-and-install.asciidoc[]
 
 [[deb]]
 *deb:*
 
 ifeval::["{release-state}"=="unreleased"]
 
-Version {stack-version} of {beatname_uc} has not yet been released.
+Version {version} of {beatname_uc} has not yet been released.
 
 endif::[]
 
@@ -51,7 +55,7 @@ endif::[]
 
 ifeval::["{release-state}"=="unreleased"]
 
-Version {stack-version} of {beatname_uc} has not yet been released.
+Version {version} of {beatname_uc} has not yet been released.
 
 endif::[]
 
@@ -70,7 +74,7 @@ endif::[]
 
 ifeval::["{release-state}"=="unreleased"]
 
-Version {stack-version} of {beatname_uc} has not yet been released.
+Version {version} of {beatname_uc} has not yet been released.
 
 endif::[]
 
@@ -84,30 +88,48 @@ tar xzvf {beatname_lc}-{version}-darwin-x86_64.tar.gz
 
 endif::[]
 
-[[docker]]
-*docker:*
+include::{libbeat-dir}/shared-brew-install.asciidoc[]
+
+[[linux]]
+*linux:*
 
 ifeval::["{release-state}"=="unreleased"]
 
-Version {stack-version} of {beatname_uc} has not yet been released.
+Version {version} of {beatname_uc} has not yet been released.
 
 endif::[]
 
 ifeval::["{release-state}"!="unreleased"]
 
-["source", "shell", subs="attributes"]
+["source","sh",subs="attributes"]
 ------------------------------------------------
-docker pull {dockerimage}
+curl -L -O https://artifacts.elastic.co/downloads/beats/{beatname_lc}/{beatname_lc}-{version}-linux-x86_64.tar.gz
+tar xzvf {beatname_lc}-{version}-linux-x86_64.tar.gz
 ------------------------------------------------
 
 endif::[]
+
+[[docker]]
+*docker:*
+
+See <<running-on-docker, Running on Docker>> for deploying Docker containers.
+
+[[kubernetes]]
+*kubernetes:*
+
+See <<running-on-kubernetes, Running on Kubernetes>> for deploying with Kubernetes.
+
+[[cloudfoundry]]
+*cloudfoundry:*
+
+See <<running-on-cloudfoundry, Running on Cloud Foundry>> for deploying with Cloud Foundry.
 
 [[win]]
 *win:*
 
 ifeval::["{release-state}"=="unreleased"]
 
-Version {stack-version} of {beatname_uc} has not yet been released.
+Version {version} of {beatname_uc} has not yet been released.
 
 endif::[]
 
@@ -147,7 +169,7 @@ For more information about these options, see
 [id="{beatname_lc}-configuration"]
 === Step 2: Configure {beatname_uc}
 
-include::../../libbeat/docs/shared-configuring.asciidoc[]
+include::{libbeat-dir}/shared-configuring.asciidoc[]
 
 When you configure {beatname_uc}, you need to specify which
 <<{beatname_lc}-modules,modules>> to run. {beatname_uc} uses modules to collect
@@ -169,7 +191,7 @@ configurations for all available {beatname_uc} modules.
 If you are using a Docker image, see <<running-on-docker>>.
 +
 The following examples enable the `apache` and `mysql` configs in the
-`modules.d` directory :
+`modules.d` directory:
 +
 *deb and rpm:*
 +
@@ -178,7 +200,7 @@ The following examples enable the `apache` and `mysql` configs in the
 {beatname_lc} modules enable apache mysql
 ----
 +
-*mac:*
+*mac and linux:*
 +
 ["source","sh",subs="attributes"]
 ----
@@ -201,38 +223,25 @@ settings.
 See <<configuration-{beatname_lc}>> if you want to add the module configs to the
 +{beatname_lc}.yml+ file rather than using the `modules.d` directory.
 
-. If you are sending output directly to Elasticsearch (and not using Logstash),
-set the IP address and port where {beatname_uc} can find the Elasticsearch
-installation. For example:
-+
-[source,yaml]
-----------------------------------------------------------------------
-output.elasticsearch:
-  hosts: ["192.168.1.42:9200"]
-----------------------------------------------------------------------
-+
-If you are sending output to Logstash, make sure you
-<<logstash-output,Configure the Logstash output>> instead.
+include::{libbeat-dir}/step-configure-output.asciidoc[]
 
-include::../../libbeat/docs/step-configure-kibana-endpoint.asciidoc[]
+include::{libbeat-dir}/step-configure-kibana-endpoint.asciidoc[]
 
-include::../../libbeat/docs/step-configure-credentials.asciidoc[]
+include::{libbeat-dir}/step-configure-credentials.asciidoc[]
 
-include::../../libbeat/docs/step-test-config.asciidoc[]
+include::{libbeat-dir}/step-test-config.asciidoc[]
 
-include::../../libbeat/docs/step-look-at-config.asciidoc[]
+include::{libbeat-dir}/step-look-at-config.asciidoc[]
 
 [id="{beatname_lc}-template"]
 === Step 3: Load the index template in Elasticsearch
 
-:allplatforms:
-include::../../libbeat/docs/shared-template-load.asciidoc[]
+include::{libbeat-dir}/shared-template-load.asciidoc[]
 
 [[load-kibana-dashboards]]
 === Step 4: Set up the Kibana dashboards
 
-:allplatforms:
-include::../../libbeat/docs/dashboards.asciidoc[]
+include::{libbeat-dir}/dashboards.asciidoc[]
 
 [id="{beatname_lc}-starting"]
 === Step 5: Start {beatname_uc}
@@ -245,14 +254,7 @@ NOTE: If you use an init.d script to start {beatname_uc} on deb or rpm, you can'
 specify command line flags (see <<command-line-options>>). To specify flags,
 start {beatname_uc} in the foreground.
 
-*deb:*
-
-["source","sh",subs="attributes"]
-----------------------------------------------------------------------
-sudo service {beatname_lc} start
-----------------------------------------------------------------------
-
-*rpm:*
+*deb and rpm:*
 
 ["source","sh",subs="attributes"]
 ----------------------------------------------------------------------
@@ -263,19 +265,23 @@ sudo service {beatname_lc} start
 
 See <<running-on-docker>>.
 
-*mac:*
+*mac and linux:*
 
 ["source","sh",subs="attributes,callouts"]
 ----------------------------------------------------------------------
 sudo chown root {beatname_lc}.yml <1>
 sudo chown root modules.d/system.yml <1>
-sudo ./{beatname_lc} -e -c {beatname_lc}.yml -d "publish"
+sudo ./{beatname_lc} -e
 ----------------------------------------------------------------------
 <1> You'll be running {beatname_uc} as root, so you need to change ownership of the
 configuration file and any configurations enabled in the `modules.d` directory,
-or run {beatname_uc} with `-strict.perms=false` specified. See
-{libbeat}/config-file-permissions.html[Config File Ownership and Permissions]
+or run {beatname_uc} with `--strict.perms=false` specified. See
+{beats-ref}/config-file-permissions.html[Config File Ownership and Permissions]
 in the _Beats Platform Reference_.
+
+:requires-sudo:
+include::{libbeat-dir}/shared-brew-run.asciidoc[]
+:requires-sudo!:
 
 *win:*
 
@@ -312,10 +318,10 @@ To make it easier for you to start monitoring your servers in Kibana,
 we have created example {beatname_uc} dashboards. You loaded the dashboards
 earlier when you ran the `setup` command.
 
-include::../../libbeat/docs/opendashboards.asciidoc[]
+include::{libbeat-dir}/opendashboards.asciidoc[]
 
 The dashboards are provided as examples. We recommend that you
 {kibana-ref}/dashboard.html[customize] them to meet your needs.
 
 [role="screenshot"]
-image:./images/{beatname_lc}_system_dashboard.png[{beatname_uc} Dashboard]
+image::./images/{beatname_lc}_system_dashboard.png[{beatname_uc} Dashboard]

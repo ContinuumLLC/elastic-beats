@@ -21,11 +21,13 @@ import (
 	"encoding/json"
 
 	"github.com/joeshaw/multierror"
+	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/common"
-	s "github.com/elastic/beats/libbeat/common/schema"
-	c "github.com/elastic/beats/libbeat/common/schema/mapstriface"
-	"github.com/elastic/beats/metricbeat/mb"
+	"github.com/elastic/beats/v7/libbeat/common"
+	s "github.com/elastic/beats/v7/libbeat/common/schema"
+	c "github.com/elastic/beats/v7/libbeat/common/schema/mapstriface"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/module/elasticsearch"
 )
 
 var (
@@ -43,12 +45,12 @@ type jobsStruct struct {
 	Jobs []map[string]interface{} `json:"jobs"`
 }
 
-func eventsMapping(r mb.ReporterV2, content []byte) error {
+func eventsMapping(r mb.ReporterV2, info elasticsearch.Info, content []byte) error {
 
 	jobsData := &jobsStruct{}
 	err := json.Unmarshal(content, jobsData)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failure parsing Elasticsearch ML Job Stats API response")
 	}
 
 	var errs multierror.Errors
@@ -56,13 +58,19 @@ func eventsMapping(r mb.ReporterV2, content []byte) error {
 
 		event := mb.Event{}
 
+		event.RootFields = common.MapStr{}
+		event.RootFields.Put("service.name", elasticsearch.ModuleName)
+
+		event.ModuleFields = common.MapStr{}
+		event.ModuleFields.Put("cluster.name", info.ClusterName)
+		event.ModuleFields.Put("cluster.id", info.ClusterID)
+
 		event.MetricSetFields, err = schema.Apply(job)
 		if err != nil {
-			errs = append(errs, err)
+			errs = append(errs, errors.Wrap(err, "failure applying ml job schema"))
+			continue
 		}
 
-		event.RootFields = common.MapStr{}
-		event.RootFields.Put("service.name", "elasticsearch")
 		r.Event(event)
 	}
 	return errs.Err()

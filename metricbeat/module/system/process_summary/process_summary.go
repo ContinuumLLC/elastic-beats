@@ -22,11 +22,11 @@ package process_summary
 import (
 	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/metric/system/process"
-	"github.com/elastic/beats/metricbeat/mb"
-	"github.com/elastic/beats/metricbeat/mb/parse"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/metric/system/process"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/mb/parse"
 	sigar "github.com/elastic/gosigar"
 )
 
@@ -59,10 +59,10 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 // Fetch methods implements the data gathering and data conversion to the right format
 // It returns the event which is then forward to the output. In case of an error, a
 // descriptive error must be returned.
-func (m *MetricSet) Fetch() (common.MapStr, error) {
+func (m *MetricSet) Fetch(r mb.ReporterV2) error {
 	pids, err := process.Pids()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to fetch the list of PIDs")
+		return errors.Wrap(err, "failed to fetch the list of PIDs")
 	}
 
 	var summary struct {
@@ -72,6 +72,7 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 		stopped  int
 		zombie   int
 		unknown  int
+		dead     int
 	}
 
 	for _, pid := range pids {
@@ -95,8 +96,10 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 			summary.stopped++
 		case 'Z':
 			summary.zombie++
+		case 'X':
+			summary.dead++
 		default:
-			logp.Err("Unknown state <%v> for process with pid %d", state.State, pid)
+			logp.Err("Unknown or unexpected state <%c> for process with pid %d", state.State, pid)
 			summary.unknown++
 		}
 	}
@@ -109,9 +112,14 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 		"stopped":  summary.stopped,
 		"zombie":   summary.zombie,
 		"unknown":  summary.unknown,
+		"dead":     summary.dead,
 	}
-	// change the name space to use . instead of _
-	event[mb.NamespaceKey] = "process.summary"
 
-	return event, nil
+	r.Event(mb.Event{
+		// change the name space to use . instead of _
+		Namespace:       "system.process.summary",
+		MetricSetFields: event,
+	})
+
+	return nil
 }

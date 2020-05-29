@@ -23,25 +23,47 @@ import (
 	"io/ioutil"
 	"path/filepath"
 	"testing"
+	"time"
 
-	mbtest "github.com/elastic/beats/metricbeat/mb/testing"
+	"github.com/stretchr/testify/require"
 
-	"github.com/stretchr/testify/assert"
+	mbtest "github.com/elastic/beats/v7/metricbeat/mb/testing"
 )
 
-func TestEventMappingXPack(t *testing.T) {
+func TestEventMappingStatsXPack(t *testing.T) {
 
-	files, err := filepath.Glob("./_meta/test/stats.*.json")
-	assert.NoError(t, err)
+	files, err := filepath.Glob("./_meta/test/stats-legacy.*.json")
+	require.NoError(t, err)
 
 	for _, f := range files {
 		input, err := ioutil.ReadFile(f)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		reporter := &mbtest.CapturingReporterV2{}
-		err = eventMappingXPack(reporter, 10000, input)
-		assert.NoError(t, err, f)
-		assert.True(t, len(reporter.GetEvents()) >= 1, f)
-		assert.Equal(t, 0, len(reporter.GetErrors()), f)
+		now := time.Now()
+
+		err = eventMappingStatsXPack(reporter, 10000, now, input)
+		require.NoError(t, err, f)
+		require.True(t, len(reporter.GetEvents()) >= 1, f)
+		require.Equal(t, 0, len(reporter.GetErrors()), f)
+	}
+}
+
+func TestEventMappingSettingsXPack(t *testing.T) {
+
+	files, err := filepath.Glob("./_meta/test/settings.*.json")
+	require.NoError(t, err)
+
+	for _, f := range files {
+		input, err := ioutil.ReadFile(f)
+		require.NoError(t, err)
+
+		reporter := &mbtest.CapturingReporterV2{}
+		now := time.Now()
+
+		err = eventMappingSettingsXPack(reporter, 10000, now, input)
+		require.NoError(t, err, f)
+		require.True(t, len(reporter.GetEvents()) >= 1, f)
+		require.Equal(t, 0, len(reporter.GetErrors()), f)
 	}
 }

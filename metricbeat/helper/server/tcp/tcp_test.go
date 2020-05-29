@@ -26,8 +26,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/metricbeat/helper/server"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/metricbeat/helper/server"
 )
 
 func GetTestTcpServer(host string, port int) (server.Server, error) {
@@ -43,6 +43,7 @@ func GetTestTcpServer(host string, port int) (server.Server, error) {
 		receiveBufferSize: 1024,
 		done:              make(chan struct{}),
 		eventQueue:        make(chan server.Event),
+		delimiter:         '\n',
 	}, nil
 }
 
@@ -62,7 +63,7 @@ func TestTcpServer(t *testing.T) {
 	}
 
 	defer svc.Stop()
-	writeToServer(t, "test1", host, port)
+	writeToServer(t, "test1\n", host, port)
 	msg := <-svc.GetEvents()
 
 	assert.True(t, msg.GetEvent() != nil)

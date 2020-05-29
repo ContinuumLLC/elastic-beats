@@ -18,18 +18,17 @@
 package partition
 
 import (
-	"crypto/tls"
-	"errors"
-
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/cfgwarn"
-	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/metricbeat/mb"
-	"github.com/elastic/beats/metricbeat/mb/parse"
-	"github.com/elastic/beats/metricbeat/module/kafka"
+	"fmt"
 
 	"github.com/Shopify/sarama"
+
+	"github.com/pkg/errors"
+
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/mb/parse"
+	"github.com/elastic/beats/v7/metricbeat/module/kafka"
 )
 
 // init registers the partition MetricSet with the central registry.
@@ -42,13 +41,10 @@ func init() {
 
 // MetricSet type defines all fields of the partition MetricSet
 type MetricSet struct {
-	mb.BaseMetricSet
+	*kafka.MetricSet
 
-	broker *kafka.Broker
 	topics []string
 }
-
-const noID int32 = -1
 
 var errFailQueryOffset = errors.New("operation failed")
 
@@ -56,64 +52,48 @@ var debugf = logp.MakeDebug("kafka")
 
 // New creates a new instance of the partition MetricSet.
 func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
-	cfgwarn.Beta("The kafka partition metricset is beta")
+	opts := kafka.MetricSetOptions{
+		Version: "0.8.2.0",
+	}
 
-	config := defaultConfig
+	ms, err := kafka.NewMetricSet(base, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	config := struct {
+		Topics []string `config:"topics"`
+	}{}
 	if err := base.Module().UnpackConfig(&config); err != nil {
 		return nil, err
 	}
 
-	var tls *tls.Config
-	tlsCfg, err := tlscommon.LoadTLSConfig(config.TLS)
-	if err != nil {
-		return nil, err
-	}
-	if tlsCfg != nil {
-		tls = tlsCfg.BuildModuleConfig("")
-	}
-
-	timeout := base.Module().Config().Timeout
-	cfg := kafka.BrokerSettings{
-		MatchID:     true,
-		DialTimeout: timeout,
-		ReadTimeout: timeout,
-		ClientID:    config.ClientID,
-		Retries:     config.Retries,
-		Backoff:     config.Backoff,
-		TLS:         tls,
-		Username:    config.Username,
-		Password:    config.Password,
-	}
-
 	return &MetricSet{
-		BaseMetricSet: base,
-		broker:        kafka.NewBroker(base.Host(), cfg),
-		topics:        config.Topics,
+		MetricSet: ms,
+		topics:    config.Topics,
 	}, nil
 }
 
-func (m *MetricSet) connect() (*kafka.Broker, error) {
-	err := m.broker.Connect()
-	return m.broker, err
-}
-
 // Fetch partition stats list from kafka
-func (m *MetricSet) Fetch() ([]common.MapStr, error) {
-	b, err := m.connect()
+func (m *MetricSet) Fetch(r mb.ReporterV2) error {
+	broker, err := m.Connect()
 	if err != nil {
-		return nil, err
+		return errors.Wrap(err, "error in connect")
+	}
+	defer broker.Close()
+
+	topics, err := broker.GetTopicsMetadata(m.topics...)
+	if err != nil {
+		return errors.Wrap(err, "error getting topic metadata")
+	}
+	if len(topics) == 0 {
+		debugf("no topic could be read, check ACLs")
+		return nil
 	}
 
-	defer b.Close()
-	topics, err := b.GetTopicsMetadata(m.topics...)
-	if err != nil {
-		return nil, err
-	}
-
-	events := []common.MapStr{}
 	evtBroker := common.MapStr{
-		"id":      b.ID(),
-		"address": b.Addr(),
+		"id":      broker.ID(),
+		"address": broker.AdvertisedAddr(),
 	}
 
 	for _, topic := range topics {
@@ -130,8 +110,8 @@ func (m *MetricSet) Fetch() ([]common.MapStr, error) {
 
 		for _, partition := range topic.Partitions {
 			// partition offsets can be queried from leader only
-			if b.ID() != partition.Leader {
-				debugf("broker is not leader (broker=%v, leader=%v)", b.ID(), partition.Leader)
+			if broker.ID() != partition.Leader {
+				debugf("broker is not leader (broker=%v, leader=%v)", broker.ID(), partition.Leader)
 				continue
 			}
 
@@ -139,15 +119,17 @@ func (m *MetricSet) Fetch() ([]common.MapStr, error) {
 			for _, id := range partition.Replicas {
 
 				// Get oldest and newest available offsets
-				offOldest, offNewest, offOK, err := queryOffsetRange(b, id, topic.Name, partition.ID)
+				offOldest, offNewest, offOK, err := queryOffsetRange(broker, id, topic.Name, partition.ID)
 
 				if !offOK {
 					if err == nil {
 						err = errFailQueryOffset
 					}
 
-					logp.Err("Failed to query kafka partition (%v:%v) offsets: %v",
+					msg := fmt.Errorf("Failed to query kafka partition (%v:%v) offsets: %v",
 						topic.Name, partition.ID, err)
+					m.Logger().Warn(msg)
+					r.Error(msg)
 					continue
 				}
 
@@ -155,6 +137,7 @@ func (m *MetricSet) Fetch() ([]common.MapStr, error) {
 					"id":             partition.ID,
 					"leader":         partition.Leader,
 					"replica":        id,
+					"is_leader":      partition.Leader == id,
 					"insync_replica": hasID(id, partition.Isr),
 				}
 
@@ -164,8 +147,17 @@ func (m *MetricSet) Fetch() ([]common.MapStr, error) {
 					}
 				}
 
+				// Helpful IDs to avoid scripts on queries
+				partitionTopicID := fmt.Sprintf("%d-%s", partition.ID, topic.Name)
+				partitionTopicBrokerID := fmt.Sprintf("%s-%d", partitionTopicID, id)
+
 				// create event
 				event := common.MapStr{
+					// Common `kafka.partition` fields
+					"id":              partition.ID,
+					"topic_id":        partitionTopicID,
+					"topic_broker_id": partitionTopicBrokerID,
+
 					"topic":     evtTopic,
 					"broker":    evtBroker,
 					"partition": partitionEvent,
@@ -175,12 +167,21 @@ func (m *MetricSet) Fetch() ([]common.MapStr, error) {
 					},
 				}
 
-				events = append(events, event)
+				// TODO (deprecation): Remove fields from MetricSetFields moved to ModuleFields
+				sent := r.Event(mb.Event{
+					ModuleFields: common.MapStr{
+						"broker": evtBroker,
+						"topic":  evtTopic,
+					},
+					MetricSetFields: event,
+				})
+				if !sent {
+					return nil
+				}
 			}
 		}
 	}
-
-	return events, nil
+	return nil
 }
 
 // queryOffsetRange queries the broker for the oldest and the newest offsets in
@@ -193,12 +194,12 @@ func queryOffsetRange(
 ) (int64, int64, bool, error) {
 	oldest, err := b.PartitionOffset(replicaID, topic, partition, sarama.OffsetOldest)
 	if err != nil {
-		return -1, -1, false, err
+		return -1, -1, false, errors.Wrap(err, "failed to get oldest offset")
 	}
 
 	newest, err := b.PartitionOffset(replicaID, topic, partition, sarama.OffsetNewest)
 	if err != nil {
-		return -1, -1, false, err
+		return -1, -1, false, errors.Wrap(err, "failed to get newest offset")
 	}
 
 	okOld := oldest != -1

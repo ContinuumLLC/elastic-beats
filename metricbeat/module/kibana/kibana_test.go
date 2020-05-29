@@ -18,35 +18,26 @@
 package kibana
 
 import (
-	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/elastic/beats/metricbeat/mb"
+	"github.com/elastic/beats/v7/libbeat/common"
 )
 
-type MockReporterV2 struct {
-	mb.ReporterV2
-}
+func TestIsStatsAPIAvailable(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"6.3.1", false},
+		{"6.4.0", true},
+		{"6.5.0", true},
+		{"7.0.0-alpha1", true},
+	}
 
-func (MockReporterV2) Event(event mb.Event) bool {
-	return true
-}
-
-var currentErr error // This hack is necessary because the Error method below cannot receive the type *MockReporterV2
-
-func (m MockReporterV2) Error(err error) bool {
-	currentErr = err
-	return true
-}
-
-func TestReportErrorForMissingField(t *testing.T) {
-	field := "some.missing.field"
-	r := MockReporterV2{}
-	err := ReportErrorForMissingField(field, r)
-
-	expectedError := fmt.Errorf("Could not find field '%v' in Kibana stats API response", field)
-	assert.Equal(t, expectedError, err)
-	assert.Equal(t, expectedError, currentErr)
+	for _, test := range tests {
+		actual := IsStatsAPIAvailable(common.MustNewVersion(test.input))
+		require.Equal(t, test.expected, actual)
+	}
 }

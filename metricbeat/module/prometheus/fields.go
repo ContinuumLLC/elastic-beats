@@ -20,16 +20,17 @@
 package prometheus
 
 import (
-	"github.com/elastic/beats/libbeat/asset"
+	"github.com/elastic/beats/v7/libbeat/asset"
 )
 
 func init() {
-	if err := asset.SetFields("metricbeat", "prometheus", Asset); err != nil {
+	if err := asset.SetFields("metricbeat", "prometheus", asset.ModuleFieldsPri, AssetPrometheus); err != nil {
 		panic(err)
 	}
 }
 
-// Asset returns asset data
-func Asset() string {
-	return "eJy0krGOm0AQhnue4pf74wEo0qQ/RUoZRdYafmDlZYfMDCf57SOC7eM4LDe5KYd/5/uY3Receakwqgz0npMVgEdPrHD4cW8eCqCh1RpHj5IrfCsA4KcHN9SSEmtng1ZlwPupsgCsF/VjLbmNXYU2JGMBKBODscKJHuYU3WPurMKvg1k6/C6ANjI1Vv0DvSCHgRvNufwyskKnMo3Xzo7mx1nLvK3Brb9wbP6xe3cP8xC11LKZcJLJ4T1XS4FR36jlKr7v8tl6bZjFYxvrMMPtQ+KR7RPjuV5XQ5cdlJvMntJa68/EicfE3Hn/KXQzS5K7nY9P5Ob6Pqky+4LBgtkqvss0KuPI5gs8XqfhRIW0N8bViG/M26Wt3m5NM1opI/OxbfavbUfq2a3dZebBaGPi/YjoAxtz0dCxrPspn+3ochypFs3/u9TAQfSCBQTvgyMo5weMCx1XLBu4oIl2Lou/AQAA//+M7D0A"
+// AssetPrometheus returns asset data.
+// This is the base64 encoded gzipped contents of ../metricbeat/module/prometheus.
+func AssetPrometheus() string {
+	return "eJzMkkGO2zAMRfc+xYe7G2TmAF70BAXaosuiCBT7O1ZHllSSniC3LxzHGU0yQJF2Uy75RfLxi4945rFBljTSBk5aAeYtsEH95ZKsK6CjtuKz+RQbfKwA4Js5U2grLrNDL2mEw2sVGLucfLSnCtAhiW3bFHu/b9C7oKwAYaBTNti7+Q3NfNxrg++1aqg3qAezXP+ogN4zdNqc5j4iupFX1HPYMc+9JE35nCnL5viAz9JR4BV+zEnMRcNA4QbB7RgUBx8CRmftgN6L2gY2EEI1OCG6NO0CL/1WlKX46eEirDBp95OtFeklsV3UZx4PSbpCfsfmNQpnR5r49jz1BmZR76e52u2Nuh1dzj7uz0/rh/ovoW9of02U4//G+uLCdPr1Kdh627P89VPB//Z639nqZqfyNP8Ac2qwfiVLHy5jdzRX5K9vfUURjsm4PYg3/gvR0genPivYqzNn45TyQrmD9ncAAAD//1baTA8="
 }

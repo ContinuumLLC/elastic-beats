@@ -22,9 +22,9 @@ package index_recovery
 import (
 	"testing"
 
-	"github.com/elastic/beats/metricbeat/module/elasticsearch"
+	"github.com/elastic/beats/v7/metricbeat/module/elasticsearch"
 )
 
 func TestMapper(t *testing.T) {
-	elasticsearch.TestMapper(t, "./_meta/test/recovery.*.json", eventsMapping)
+	elasticsearch.TestMapperWithInfo(t, "./_meta/test/recovery.*.json", eventsMapping)
 }

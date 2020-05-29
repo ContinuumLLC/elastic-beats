@@ -23,24 +23,29 @@ import (
 	"io/ioutil"
 	"testing"
 
-	mbtest "github.com/elastic/beats/metricbeat/mb/testing"
+	"github.com/stretchr/testify/require"
 
-	"github.com/stretchr/testify/assert"
+	mbtest "github.com/elastic/beats/v7/metricbeat/mb/testing"
 
-	"github.com/elastic/beats/metricbeat/module/elasticsearch"
+	"github.com/elastic/beats/v7/metricbeat/module/elasticsearch"
 )
 
+var info = elasticsearch.Info{
+	ClusterID:   "1234",
+	ClusterName: "helloworld",
+}
+
 func TestGetMappings(t *testing.T) {
-	elasticsearch.TestMapper(t, "./_meta/test/node.*.json", eventsMapping)
+	elasticsearch.TestMapperWithInfo(t, "./_meta/test/node.*.json", eventsMapping)
 }
 
 func TestInvalid(t *testing.T) {
 	file := "./_meta/test/invalid.json"
 
 	content, err := ioutil.ReadFile(file)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	reporter := &mbtest.CapturingReporterV2{}
-	err = eventsMapping(reporter, content)
-	assert.Error(t, err)
+	err = eventsMapping(reporter, info, content)
+	require.Error(t, err)
 }

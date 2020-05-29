@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// +build !integration
 // +build linux
 
 package diskio
@@ -22,10 +23,13 @@ package diskio
 import (
 	"testing"
 
+	"github.com/shirou/gopsutil/disk"
 	"github.com/stretchr/testify/assert"
 
-	mbtest "github.com/elastic/beats/metricbeat/mb/testing"
-	"github.com/elastic/beats/metricbeat/module/system"
+	sigar "github.com/elastic/gosigar"
+
+	mbtest "github.com/elastic/beats/v7/metricbeat/mb/testing"
+	"github.com/elastic/beats/v7/metricbeat/module/system"
 )
 
 func Test_Get_CLK_TCK(t *testing.T) {
@@ -47,14 +51,9 @@ func TestDataNameFilter(t *testing.T) {
 		"diskio.include_devices": []string{"sda", "sda1", "sda2"},
 	}
 
-	f := mbtest.NewEventsFetcher(t, conf)
-
-	if err := mbtest.WriteEvents(f, t); err != nil {
-		t.Fatal("write", err)
-	}
-
-	data, err := f.Fetch()
-	assert.NoError(t, err)
+	f := mbtest.NewReportingMetricSetV2Error(t, conf)
+	data, errs := mbtest.ReportingFetchV2Error(f)
+	assert.Empty(t, errs)
 	assert.Equal(t, 3, len(data))
 }
 
@@ -71,13 +70,47 @@ func TestDataEmptyFilter(t *testing.T) {
 		"metricsets": []string{"diskio"},
 	}
 
-	f := mbtest.NewEventsFetcher(t, conf)
+	f := mbtest.NewReportingMetricSetV2Error(t, conf)
+	data, errs := mbtest.ReportingFetchV2Error(f)
+	assert.Empty(t, errs)
+	assert.Equal(t, 10, len(data))
+}
 
-	if err := mbtest.WriteEvents(f, t); err != nil {
-		t.Fatal("write", err)
+func TestDiskIOStat_CalIOStatistics(t *testing.T) {
+	counter := disk.IOCountersStat{
+		ReadCount:  13,
+		WriteCount: 17,
+		ReadTime:   19,
+		WriteTime:  23,
+		Name:       "iostat",
 	}
 
-	data, err := f.Fetch()
-	assert.NoError(t, err)
-	assert.Equal(t, 10, len(data))
+	stat := &DiskIOStat{
+		lastDiskIOCounters: map[string]disk.IOCountersStat{
+			"iostat": disk.IOCountersStat{
+				ReadCount:  3,
+				WriteCount: 5,
+				ReadTime:   7,
+				WriteTime:  11,
+				Name:       "iostat",
+			},
+		},
+		lastCpu: sigar.Cpu{Idle: 100},
+		curCpu:  sigar.Cpu{Idle: 1},
+	}
+
+	expected := DiskIOMetric{
+		AvgAwaitTime:      24.0 / 22.0,
+		AvgReadAwaitTime:  1.2,
+		AvgWriteAwaitTime: 1,
+	}
+	var got DiskIOMetric
+	err := stat.CalIOStatistics(&got, counter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, expected.AvgAwaitTime, got.AvgAwaitTime)
+	assert.Equal(t, expected.AvgReadAwaitTime, got.AvgReadAwaitTime)
+	assert.Equal(t, expected.AvgWriteAwaitTime, got.AvgWriteAwaitTime)
 }

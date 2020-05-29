@@ -19,7 +19,6 @@ package testing
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -27,20 +26,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/metricbeat/mb"
-)
-
-var (
-	// Use `go test -data` to update files.
-	dataFlag = flag.Bool("data", false, "Write updated data.json files")
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/mb/testing/flags"
 )
 
 // WriteEvent fetches a single event writes the output to a ./_meta/data.json
 // file.
 func WriteEvent(f mb.EventFetcher, t testing.TB) error {
-	if !*dataFlag {
+	if !*flags.DataFlag {
 		t.Skip("skip data generation tests")
 	}
 
@@ -50,7 +45,7 @@ func WriteEvent(f mb.EventFetcher, t testing.TB) error {
 	}
 
 	fullEvent := CreateFullEvent(f, event)
-	WriteEventToDataJSON(t, fullEvent, "")
+	WriteEventToDataJSON(t, fullEvent, ".")
 	return nil
 }
 
@@ -64,7 +59,7 @@ func WriteEvents(f mb.EventsFetcher, t testing.TB) error {
 // WriteEventsCond fetches events and writes the first event that matches the condition
 // to a ./_meta/data.json file.
 func WriteEventsCond(f mb.EventsFetcher, t testing.TB, cond func(e common.MapStr) bool) error {
-	if !*dataFlag {
+	if !*flags.DataFlag {
 		t.Skip("skip data generation tests")
 	}
 
@@ -77,22 +72,12 @@ func WriteEventsCond(f mb.EventsFetcher, t testing.TB, cond func(e common.MapStr
 		return fmt.Errorf("no events were generated")
 	}
 
-	var event *common.MapStr
-	if cond == nil {
-		event = &events[0]
-	} else {
-		for _, e := range events {
-			if cond(e) {
-				event = &e
-				break
-			}
-		}
-		if event == nil {
-			return fmt.Errorf("no events satisfied the condition")
-		}
+	event, err := SelectEvent(events, cond)
+	if err != nil {
+		return err
 	}
 
-	fullEvent := CreateFullEvent(f, *event)
+	fullEvent := CreateFullEvent(f, event)
 	WriteEventToDataJSON(t, fullEvent, "")
 	return nil
 }
@@ -100,7 +85,25 @@ func WriteEventsCond(f mb.EventsFetcher, t testing.TB, cond func(e common.MapStr
 // WriteEventsReporterV2 fetches events and writes the first event to a ./_meta/data.json
 // file.
 func WriteEventsReporterV2(f mb.ReportingMetricSetV2, t testing.TB, path string) error {
-	if !*dataFlag {
+	return WriteEventsReporterV2Cond(f, t, path, nil)
+}
+
+// WriteEventsReporterV2Error fetches events and writes the first event to a ./_meta/data.json
+// file.
+func WriteEventsReporterV2Error(f mb.ReportingMetricSetV2Error, t testing.TB, path string) error {
+	return WriteEventsReporterV2ErrorCond(f, t, path, nil)
+}
+
+// WriteEventsReporterV2WithContext fetches events and writes the first event to a ./_meta/data.json
+// file.
+func WriteEventsReporterV2WithContext(f mb.ReportingMetricSetV2WithContext, t testing.TB, path string) error {
+	return WriteEventsReporterV2WithContextCond(f, t, path, nil)
+}
+
+// WriteEventsReporterV2Cond fetches events and writes the first event that matches
+// the condition to a file.
+func WriteEventsReporterV2Cond(f mb.ReportingMetricSetV2, t testing.TB, path string, cond func(common.MapStr) bool) error {
+	if !*flags.DataFlag {
 		t.Skip("skip data generation tests")
 	}
 
@@ -109,11 +112,50 @@ func WriteEventsReporterV2(f mb.ReportingMetricSetV2, t testing.TB, path string)
 		return errs[0]
 	}
 
+	return writeEvent(events, f, t, path, cond)
+}
+
+// WriteEventsReporterV2ErrorCond fetches events and writes the first event that matches
+// the condition to a file.
+func WriteEventsReporterV2ErrorCond(f mb.ReportingMetricSetV2Error, t testing.TB, path string, cond func(common.MapStr) bool) error {
+	if !*flags.DataFlag {
+		t.Skip("skip data generation tests")
+	}
+
+	events, errs := ReportingFetchV2Error(f)
+	if len(errs) > 0 {
+		return errs[0]
+	}
+
+	return writeEvent(events, f, t, path, cond)
+}
+
+// WriteEventsReporterV2WithContextCond fetches events and writes the first event that matches
+// the condition to a file.
+func WriteEventsReporterV2WithContextCond(f mb.ReportingMetricSetV2WithContext, t testing.TB, path string, cond func(common.MapStr) bool) error {
+	if !*flags.DataFlag {
+		t.Skip("skip data generation tests")
+	}
+
+	events, errs := ReportingFetchV2WithContext(f)
+	if len(errs) > 0 {
+		return errs[0]
+	}
+
+	return writeEvent(events, f, t, path, cond)
+}
+
+func writeEvent(events []mb.Event, f mb.MetricSet, t testing.TB, path string, cond func(common.MapStr) bool) error {
 	if len(events) == 0 {
 		return fmt.Errorf("no events were generated")
 	}
 
-	e := StandardizeEvent(f, events[0], mb.AddMetricSetInfo)
+	match, err := SelectEventV2(f, events, cond)
+	if err != nil {
+		return err
+	}
+
+	e := StandardizeEvent(f, match, mb.AddMetricSetInfo)
 
 	WriteEventToDataJSON(t, e, path)
 	return nil
@@ -142,16 +184,12 @@ func StandardizeEvent(ms mb.MetricSet, e mb.Event, modifiers ...mb.EventModifier
 	e.Timestamp = startTime
 	e.Took = 115 * time.Microsecond
 	e.Host = ms.Host()
+	e.Period = 10 * time.Second
 	if e.Namespace == "" {
 		e.Namespace = ms.Registration().Namespace
 	}
 
 	fullEvent := e.BeatEvent(ms.Module().Name(), ms.Name(), modifiers...)
-
-	fullEvent.Fields["beat"] = common.MapStr{
-		"name":     "host.example.com",
-		"hostname": "host.example.com",
-	}
 
 	return fullEvent
 }
@@ -160,7 +198,7 @@ func StandardizeEvent(ms mb.MetricSet, e mb.Event, modifiers ...mb.EventModifier
 // a ./_meta/data.json file. If the -data CLI flag is unset or false then the
 // method is a no-op.
 func WriteEventToDataJSON(t testing.TB, fullEvent beat.Event, postfixPath string) {
-	if !*dataFlag {
+	if !*flags.DataFlag {
 		return
 	}
 
@@ -169,7 +207,11 @@ func WriteEventToDataJSON(t testing.TB, fullEvent beat.Event, postfixPath string
 		t.Fatal(err)
 	}
 
-	p = path.Join(p, postfixPath, "_meta", "data.json")
+	if stat, err := os.Stat(postfixPath); postfixPath == "" || (err == nil && stat.IsDir()) {
+		p = path.Join(p, postfixPath, "_meta", "data.json")
+	} else {
+		p = postfixPath
+	}
 
 	fields := fullEvent.Fields
 	fields["@timestamp"] = fullEvent.Timestamp
@@ -182,4 +224,31 @@ func WriteEventToDataJSON(t testing.TB, fullEvent beat.Event, postfixPath string
 	if err = ioutil.WriteFile(p, output, 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// SelectEvent selects the first event that matches an specific condition
+func SelectEvent(events []common.MapStr, cond func(e common.MapStr) bool) (common.MapStr, error) {
+	if cond == nil && len(events) > 0 {
+		return events[0], nil
+	}
+	for _, e := range events {
+		if cond(e) {
+			return e, nil
+		}
+	}
+	return nil, fmt.Errorf("no events satisfied the condition")
+}
+
+// SelectEventV2 selects the first event that matches an specific condition
+func SelectEventV2(f mb.MetricSet, events []mb.Event, cond func(e common.MapStr) bool) (mb.Event, error) {
+	if cond == nil && len(events) > 0 {
+		return events[0], nil
+	}
+	for _, e := range events {
+		fields := StandardizeEvent(f, e, mb.AddMetricSetInfo).Fields
+		if cond(fields) {
+			return e, nil
+		}
+	}
+	return mb.Event{}, fmt.Errorf("no events satisfied the condition")
 }

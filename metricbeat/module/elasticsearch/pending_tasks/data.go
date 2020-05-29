@@ -21,10 +21,14 @@ import (
 	"encoding/json"
 
 	"github.com/joeshaw/multierror"
+	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/common"
-	s "github.com/elastic/beats/libbeat/common/schema"
-	c "github.com/elastic/beats/libbeat/common/schema/mapstriface"
+	"github.com/elastic/beats/v7/libbeat/common"
+	s "github.com/elastic/beats/v7/libbeat/common/schema"
+	c "github.com/elastic/beats/v7/libbeat/common/schema/mapstriface"
+	"github.com/elastic/beats/v7/metricbeat/helper/elastic"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/module/elasticsearch"
 )
 
 var (
@@ -36,29 +40,39 @@ var (
 	}
 )
 
-func eventsMapping(content []byte, applyOpts ...s.ApplyOption) ([]common.MapStr, error) {
+func eventsMapping(r mb.ReporterV2, info elasticsearch.Info, content []byte) error {
 	tasksStruct := struct {
 		Tasks []map[string]interface{} `json:"tasks"`
 	}{}
 
-	if err := json.Unmarshal(content, &tasksStruct); err != nil {
-		return nil, err
+	err := json.Unmarshal(content, &tasksStruct)
+	if err != nil {
+		return errors.Wrap(err, "failure parsing Elasticsearch Pending Tasks API response")
 	}
+
 	if tasksStruct.Tasks == nil {
-		return nil, s.NewKeyNotFoundError("tasks")
+		return elastic.MakeErrorForMissingField("tasks", elastic.Elasticsearch)
 	}
 
-	var events []common.MapStr
-	var errors multierror.Errors
-
-	opts := append(applyOpts, s.AllRequired)
+	var errs multierror.Errors
 	for _, task := range tasksStruct.Tasks {
-		event, err := schema.Apply(task, opts...)
+		event := mb.Event{}
+
+		event.RootFields = common.MapStr{}
+		event.RootFields.Put("service.name", elasticsearch.ModuleName)
+
+		event.ModuleFields = common.MapStr{}
+		event.ModuleFields.Put("cluster.name", info.ClusterName)
+		event.ModuleFields.Put("cluster.id", info.ClusterID)
+
+		event.MetricSetFields, err = schema.Apply(task)
 		if err != nil {
-			errors = append(errors, err)
+			errs = append(errs, errors.Wrap(err, "failure applying task schema"))
+			continue
 		}
-		events = append(events, event)
+
+		r.Event(event)
 	}
 
-	return events, errors.Err()
+	return errs.Err()
 }

@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/monitoring"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/monitoring"
 )
 
 var (
@@ -37,6 +37,11 @@ func init() {
 // Runner is a facade for a Wrapper that provides a simple interface
 // for starting and stopping a Module.
 type Runner interface {
+	// fmt.Stringer is required here because when used as a cfgfile.Runner
+	// we need a way to print a threadsafe set of fields since it will likely
+	// be printed from a concurrent goroutine.
+	fmt.Stringer
+
 	// Start starts the Module. If Start is called more than once, only the
 	// first will start the Module.
 	Start()

@@ -18,11 +18,15 @@
 package state_container
 
 import (
-	"github.com/elastic/beats/libbeat/common"
-	p "github.com/elastic/beats/metricbeat/helper/prometheus"
-	"github.com/elastic/beats/metricbeat/mb"
-	"github.com/elastic/beats/metricbeat/mb/parse"
-	"github.com/elastic/beats/metricbeat/module/kubernetes/util"
+	"strings"
+
+	"github.com/pkg/errors"
+
+	"github.com/elastic/beats/v7/libbeat/common"
+	p "github.com/elastic/beats/v7/metricbeat/helper/prometheus"
+	"github.com/elastic/beats/v7/metricbeat/mb"
+	"github.com/elastic/beats/v7/metricbeat/mb/parse"
+	"github.com/elastic/beats/v7/metricbeat/module/kubernetes/util"
 )
 
 const (
@@ -53,8 +57,8 @@ var (
 			"kube_pod_container_status_running":                 p.KeywordMetric("status.phase", "running"),
 			"kube_pod_container_status_terminated":              p.KeywordMetric("status.phase", "terminated"),
 			"kube_pod_container_status_waiting":                 p.KeywordMetric("status.phase", "waiting"),
-			"kube_pod_container_status_terminated_reason":       p.LabelMetric("status.reason", "reason", false),
-			"kube_pod_container_status_waiting_reason":          p.LabelMetric("status.reason", "reason", false),
+			"kube_pod_container_status_terminated_reason":       p.LabelMetric("status.reason", "reason"),
+			"kube_pod_container_status_waiting_reason":          p.LabelMetric("status.reason", "reason"),
 		},
 
 		Labels: map[string]p.LabelMap{
@@ -65,10 +69,6 @@ var (
 			"node":         p.Label(mb.ModuleDataKey + ".node.name"),
 			"container_id": p.Label("id"),
 			"image":        p.Label("image"),
-		},
-
-		ExtraFields: map[string]string{
-			mb.NamespaceKey: "container",
 		},
 	}
 )
@@ -106,15 +106,15 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 	}, nil
 }
 
-// Fetch methods implements the data gathering and data conversion to the right format
-// It returns the event which is then forward to the output. In case of an error, a
-// descriptive error must be returned.
-func (m *MetricSet) Fetch() ([]common.MapStr, error) {
+// Fetch methods implements the data gathering and data conversion to the right
+// format. It publishes the event which is then forwarded to the output. In case
+// of an error set the Error field of mb.Event or simply call report.Error().
+func (m *MetricSet) Fetch(reporter mb.ReporterV2) error {
 	m.enricher.Start()
 
 	events, err := m.prometheus.GetProcessedMetrics(mapping)
 	if err != nil {
-		return nil, err
+		return errors.Wrap(err, "error getting event")
 	}
 
 	m.enricher.Enrich(events)
@@ -132,9 +132,44 @@ func (m *MetricSet) Fetch() ([]common.MapStr, error) {
 				event["cpu.limit.nanocores"] = limitCores * nanocores
 			}
 		}
+
+		// applying ECS to kubernetes.container.id in the form <container.runtime>://<container.id>
+		var rootFields common.MapStr
+		if containerID, ok := event["id"]; ok {
+			// we don't expect errors here, but if any we would obtain an
+			// empty string
+			cID := (containerID).(string)
+			split := strings.Index(cID, "://")
+			if split != -1 {
+				rootFields = common.MapStr{
+					"container": common.MapStr{
+						"runtime": cID[:split],
+						"id":      cID[split+3:],
+					}}
+			}
+		}
+
+		var moduleFieldsMapStr common.MapStr
+		moduleFields, ok := event[mb.ModuleDataKey]
+		if ok {
+			moduleFieldsMapStr, ok = moduleFields.(common.MapStr)
+			if !ok {
+				m.Logger().Errorf("error trying to convert '%s' from event to common.MapStr", mb.ModuleDataKey)
+			}
+		}
+		delete(event, mb.ModuleDataKey)
+
+		if reported := reporter.Event(mb.Event{
+			RootFields:      rootFields,
+			MetricSetFields: event,
+			ModuleFields:    moduleFieldsMapStr,
+			Namespace:       "kubernetes.container",
+		}); !reported {
+			return nil
+		}
 	}
 
-	return events, err
+	return nil
 }
 
 // Close stops this metricset

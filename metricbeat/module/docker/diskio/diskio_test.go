@@ -25,7 +25,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/elastic/beats/metricbeat/module/docker"
+	"github.com/elastic/beats/v7/metricbeat/module/docker"
 )
 
 var blkioService BlkioService
@@ -222,7 +222,7 @@ func setTime(index int) {
 	newBlkioRaw[index].Time = oldBlkioRaw[index].Time.Add(time.Duration(2000000000))
 }
 
-func TestGetBlkioStats(t *testing.T) {
+func TestGetBlkioStatsList(t *testing.T) {
 	start := time.Now()
 	later := start.Add(10 * time.Second)
 
@@ -232,7 +232,7 @@ func TestGetBlkioStats(t *testing.T) {
 		},
 	}
 
-	dockerStats := &docker.Stat{
+	dockerStats := []docker.Stat{{
 		Container: &types.Container{
 			ID:    "cebada",
 			Names: []string{"test"},
@@ -256,11 +256,84 @@ func TestGetBlkioStats(t *testing.T) {
 					{Major: 1, Minor: 2, Op: "Write", Value: 1000},
 					{Major: 1, Minor: 2, Op: "Total", Value: 1500},
 				},
+				IoServiceTimeRecursive: []types.BlkioStatEntry{
+					{Major: 1, Minor: 1, Op: "Read", Value: 10000},
+					{Major: 1, Minor: 1, Op: "Write", Value: 20000},
+					{Major: 1, Minor: 1, Op: "Total", Value: 30000},
+					{Major: 1, Minor: 2, Op: "Read", Value: 500},
+					{Major: 1, Minor: 2, Op: "Write", Value: 1500},
+					{Major: 1, Minor: 2, Op: "Total", Value: 2000},
+				},
+				IoWaitTimeRecursive: []types.BlkioStatEntry{
+					{Major: 1, Minor: 1, Op: "Read", Value: 1000000},
+					{Major: 1, Minor: 1, Op: "Write", Value: 25604332},
+					{Major: 1, Minor: 1, Op: "Total", Value: 26604332},
+					{Major: 1, Minor: 2, Op: "Read", Value: 500},
+					{Major: 1, Minor: 2, Op: "Write", Value: 1500},
+					{Major: 1, Minor: 2, Op: "Total", Value: 2000},
+				},
+				IoQueuedRecursive: []types.BlkioStatEntry{
+					{Major: 1, Minor: 1, Op: "Read", Value: 100},
+					{Major: 1, Minor: 1, Op: "Write", Value: 200},
+					{Major: 1, Minor: 1, Op: "Total", Value: 300},
+					{Major: 1, Minor: 2, Op: "Read", Value: 50},
+					{Major: 1, Minor: 2, Op: "Write", Value: 100},
+					{Major: 1, Minor: 2, Op: "Total", Value: 150},
+				},
 			},
 		}},
+	}}
+
+	statsList := blkioService.getBlkioStatsList(dockerStats, true)
+	stats := statsList[0]
+	assert.Equal(t, float64(5), stats.reads)
+	assert.Equal(t, float64(10), stats.writes)
+	assert.Equal(t, float64(15), stats.totals)
+	assert.Equal(t,
+		BlkioRaw{Time: later, reads: 150, writes: 300, totals: 450},
+		stats.serviced)
+	assert.Equal(t,
+		BlkioRaw{Time: later, reads: 1500, writes: 3000, totals: 4500},
+		stats.servicedBytes)
+	assert.Equal(t,
+		BlkioRaw{Time: later, reads: 10500, writes: 21500, totals: 32000},
+		stats.servicedTime)
+	assert.Equal(t,
+		BlkioRaw{Time: later, reads: 1000500, writes: 25605832, totals: 26606332},
+		stats.waitTime)
+	assert.Equal(t,
+		BlkioRaw{Time: later, reads: 150, writes: 300, totals: 450},
+		stats.queued)
+}
+
+func TestGetBlkioStatsListWindows(t *testing.T) {
+	start := time.Now()
+	later := start.Add(10 * time.Second)
+
+	blkioService := BlkioService{
+		map[string]BlkioRaw{
+			"cebada": {Time: start, reads: 100, writes: 200, totals: 300},
+		},
 	}
 
-	stats := blkioService.getBlkioStats(dockerStats, true)
+	dockerStats := []docker.Stat{{
+		Container: &types.Container{
+			ID:    "cebada",
+			Names: []string{"test"},
+		},
+		Stats: types.StatsJSON{Stats: types.Stats{
+			Read: later,
+			StorageStats: types.StorageStats{
+				ReadCountNormalized:  150,
+				WriteCountNormalized: 300,
+				ReadSizeBytes:        1500,
+				WriteSizeBytes:       3000,
+			},
+		}},
+	}}
+
+	statsList := blkioService.getBlkioStatsList(dockerStats, true)
+	stats := statsList[0]
 	assert.Equal(t, float64(5), stats.reads)
 	assert.Equal(t, float64(10), stats.writes)
 	assert.Equal(t, float64(15), stats.totals)
