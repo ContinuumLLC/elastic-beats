@@ -22,9 +22,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/publisher"
-	"github.com/elastic/beats/libbeat/publisher/queue"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/publisher"
+	"github.com/elastic/beats/v7/libbeat/publisher/queue"
 )
 
 // TestSingleProducerConsumer tests buffered events for a producer getting
@@ -34,7 +34,7 @@ import (
 // Note: queues not requiring consumers to ACK a events in order to
 //       return ACKs to the producer are not supported by this test.
 func TestProducerCancelRemovesEvents(t *testing.T, factory QueueFactory) {
-	fn := withLogOutput(func(t *testing.T) {
+	fn := withOptLogOutput(true, func(t *testing.T) {
 		var (
 			i  int
 			N1 = 3

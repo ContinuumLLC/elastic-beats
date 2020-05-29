@@ -19,30 +19,31 @@ package kibana
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/outputs/transport"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/common/transport"
+	"github.com/elastic/beats/v7/libbeat/common/transport/tlscommon"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 type Connection struct {
 	URL      string
 	Username string
 	Password string
-	Headers  map[string]string
 
-	http    *http.Client
-	version string
+	HTTP    *http.Client
+	Version common.Version
 }
 
 type Client struct {
@@ -78,7 +79,7 @@ func extractError(result []byte) error {
 
 // NewKibanaClient builds and returns a new Kibana client
 func NewKibanaClient(cfg *common.Config) (*Client, error) {
-	config := defaultClientConfig
+	config := DefaultClientConfig()
 	if err := cfg.Unpack(&config); err != nil {
 		return nil, err
 	}
@@ -88,7 +89,11 @@ func NewKibanaClient(cfg *common.Config) (*Client, error) {
 
 // NewClientWithConfig creates and returns a kibana client using the given config
 func NewClientWithConfig(config *ClientConfig) (*Client, error) {
-	kibanaURL, err := common.MakeURL(config.Protocol, config.Path, config.Host, 5601)
+	p := config.Path
+	if config.SpaceID != "" {
+		p = path.Join(p, "s", config.SpaceID)
+	}
+	kibanaURL, err := common.MakeURL(config.Protocol, p, config.Host, 5601)
 	if err != nil {
 		return nil, fmt.Errorf("invalid Kibana host: %v", err)
 	}
@@ -130,18 +135,21 @@ func NewClientWithConfig(config *ClientConfig) (*Client, error) {
 			URL:      kibanaURL,
 			Username: username,
 			Password: password,
-			http: &http.Client{
+			HTTP: &http.Client{
 				Transport: &http.Transport{
-					Dial:    dialer.Dial,
-					DialTLS: tlsDialer.Dial,
+					Dial:            dialer.Dial,
+					DialTLS:         tlsDialer.Dial,
+					TLSClientConfig: tlsConfig.ToConfig(),
 				},
 				Timeout: config.Timeout,
 			},
 		},
 	}
 
-	if err = client.SetVersion(); err != nil {
-		return nil, fmt.Errorf("fail to get the Kibana version: %v", err)
+	if !config.IgnoreVersion {
+		if err = client.readVersion(); err != nil {
+			return nil, fmt.Errorf("fail to get the Kibana version: %v", err)
+		}
 	}
 
 	return client, nil
@@ -150,31 +158,7 @@ func NewClientWithConfig(config *ClientConfig) (*Client, error) {
 func (conn *Connection) Request(method, extraPath string,
 	params url.Values, headers http.Header, body io.Reader) (int, []byte, error) {
 
-	reqURL := addToURL(conn.URL, extraPath, params)
-
-	req, err := http.NewRequest(method, reqURL, body)
-	if err != nil {
-		return 0, nil, fmt.Errorf("fail to create the HTTP %s request: %v", method, err)
-	}
-
-	if conn.Username != "" || conn.Password != "" {
-		req.SetBasicAuth(conn.Username, conn.Password)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Add("Accept", "application/json")
-
-	for header, values := range headers {
-		for _, value := range values {
-			req.Header.Add(header, value)
-		}
-	}
-
-	if method != "GET" {
-		req.Header.Set("kbn-version", conn.version)
-	}
-
-	resp, err := conn.http.Do(req)
+	resp, err := conn.Send(method, extraPath, params, headers, body)
 	if err != nil {
 		return 0, nil, fmt.Errorf("fail to execute the HTTP %s request: %v", method, err)
 	}
@@ -194,7 +178,47 @@ func (conn *Connection) Request(method, extraPath string,
 	return resp.StatusCode, result, retError
 }
 
-func (client *Client) SetVersion() error {
+// Sends an application/json request to Kibana with appropriate kbn headers
+func (conn *Connection) Send(method, extraPath string,
+	params url.Values, headers http.Header, body io.Reader) (*http.Response, error) {
+
+	return conn.SendWithContext(context.Background(), method, extraPath, params, headers, body)
+}
+
+// SendWithContext sends an application/json request to Kibana with appropriate kbn headers and the given context.
+func (conn *Connection) SendWithContext(ctx context.Context, method, extraPath string,
+	params url.Values, headers http.Header, body io.Reader) (*http.Response, error) {
+
+	reqURL := addToURL(conn.URL, extraPath, params)
+
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
+	if err != nil {
+		return nil, fmt.Errorf("fail to create the HTTP %s request: %+v", method, err)
+	}
+
+	if conn.Username != "" || conn.Password != "" {
+		req.SetBasicAuth(conn.Username, conn.Password)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Add("Accept", "application/json")
+	req.Header.Set("kbn-xsrf", "1")
+
+	for header, values := range headers {
+		for _, value := range values {
+			req.Header.Add(header, value)
+		}
+	}
+
+	return conn.RoundTrip(req)
+}
+
+// Implements RoundTrip interface
+func (conn *Connection) RoundTrip(r *http.Request) (*http.Response, error) {
+	return conn.HTTP.Do(r)
+}
+
+func (client *Client) readVersion() error {
 	type kibanaVersionResponse struct {
 		Name    string `json:"name"`
 		Version struct {
@@ -210,38 +234,38 @@ func (client *Client) SetVersion() error {
 
 	code, result, err := client.Connection.Request("GET", "/api/status", nil, nil, nil)
 	if err != nil || code >= 400 {
-		return fmt.Errorf("HTTP GET request to /api/status fails: %v. Response: %s.",
-			err, truncateString(result))
+		return fmt.Errorf("HTTP GET request to %s/api/status fails: %v. Response: %s.",
+			client.Connection.URL, err, truncateString(result))
 	}
+
+	var versionString string
 
 	var kibanaVersion kibanaVersionResponse
-	var kibanaVersion5x kibanaVersionResponse5x
-
 	err = json.Unmarshal(result, &kibanaVersion)
 	if err != nil {
-
-		// The response returned by /api/status is different in Kibana 5.x than in Kibana 6.x
-		err5x := json.Unmarshal(result, &kibanaVersion5x)
-		if err5x != nil {
-
-			return fmt.Errorf("fail to unmarshal the response from GET %s/api/status. Response: %s. Kibana 5.x status api returns: %v. Kibana 6.x status api returns: %v",
-				client.Connection.URL, truncateString(result), err5x, err)
-		}
-		client.version = kibanaVersion5x.Version
-	} else {
-
-		client.version = kibanaVersion.Version.Number
-
-		if kibanaVersion.Version.Snapshot {
-			// needed for the tests
-			client.version = client.version + "-SNAPSHOT"
-		}
+		return fmt.Errorf("fail to unmarshal the response from GET %s/api/status. Response: %s. Kibana status api returns: %v",
+			client.Connection.URL, truncateString(result), err)
 	}
 
+	versionString = kibanaVersion.Version.Number
+
+	if kibanaVersion.Version.Snapshot {
+		// needed for the tests
+		versionString += "-SNAPSHOT"
+	}
+
+	version, err := common.NewVersion(versionString)
+	if err != nil {
+		return fmt.Errorf("fail to parse kibana version (%v): %+v", versionString, err)
+	}
+
+	client.Version = *version
 	return nil
 }
 
-func (client *Client) GetVersion() string { return client.version }
+// GetVersion returns the version read from kibana. The version is not set if
+// IgnoreVersion was set when creating the client.
+func (client *Client) GetVersion() common.Version { return client.Version }
 
 func (client *Client) ImportJSON(url string, params url.Values, jsonBody map[string]interface{}) error {
 
@@ -276,6 +300,7 @@ func (client *Client) GetDashboard(id string) (common.MapStr, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error removing index pattern: %+v", err)
 	}
+
 	return result, nil
 }
 

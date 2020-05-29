@@ -20,8 +20,8 @@ package json
 import (
 	"time"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
 )
 
 // Event describes the event structure for events
@@ -46,7 +46,7 @@ func makeEvent(index, version string, in *beat.Event) event {
 		Meta: meta{
 			Beat:    index,
 			Version: version,
-			Type:    "doc",
+			Type:    "_doc",
 			Fields:  in.Meta,
 		},
 		Fields: in.Fields,

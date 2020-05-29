@@ -33,8 +33,6 @@
 package streambuf
 
 import (
-	"github.com/elastic/beats/libbeat/logp"
-
 	"bytes"
 	"errors"
 )
@@ -231,11 +229,7 @@ func (b *Buffer) Advance(count int) error {
 // Failed returns true if buffer is in failed state. If buffer is in failed
 // state, almost all buffer operations will fail
 func (b *Buffer) Failed() bool {
-	failed := b.err != nil
-	if failed {
-		logp.Debug("streambuf", "buf parser already failed with: %s", b.err)
-	}
-	return failed
+	return b.err != nil
 }
 
 // Err returns the error value of the last failed operation.

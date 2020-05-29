@@ -24,16 +24,17 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/outputs"
-	"github.com/elastic/beats/libbeat/outputs/codec"
-	"github.com/elastic/beats/libbeat/outputs/codec/json"
-	"github.com/elastic/beats/libbeat/publisher"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/outputs"
+	"github.com/elastic/beats/v7/libbeat/outputs/codec"
+	"github.com/elastic/beats/v7/libbeat/outputs/codec/json"
+	"github.com/elastic/beats/v7/libbeat/publisher"
 )
 
 type console struct {
+	log      *logp.Logger
 	out      *os.File
 	observer outputs.Observer
 	writer   *bufio.Writer
@@ -53,6 +54,7 @@ func init() {
 }
 
 func makeConsole(
+	_ outputs.IndexManager,
 	beat beat.Info,
 	observer outputs.Observer,
 	cfg *common.Config,
@@ -70,7 +72,10 @@ func makeConsole(
 			return outputs.Fail(err)
 		}
 	} else {
-		enc = json.New(config.Pretty, true, beat.Version)
+		enc = json.New(beat.Version, json.Config{
+			Pretty:     config.Pretty,
+			EscapeHTML: false,
+		})
 	}
 
 	index := beat.Beat
@@ -91,7 +96,7 @@ func makeConsole(
 }
 
 func newConsole(index string, observer outputs.Observer, codec codec.Codec) (*console, error) {
-	c := &console{out: os.Stdout, codec: codec, observer: observer, index: index}
+	c := &console{log: logp.NewLogger("console"), out: os.Stdout, codec: codec, observer: observer, index: index}
 	c.writer = bufio.NewWriterSize(c.out, 8*1024)
 	return c, nil
 }
@@ -128,19 +133,20 @@ func (c *console) publishEvent(event *publisher.Event) bool {
 			return false
 		}
 
-		logp.Critical("Unable to encode event: %v", err)
+		c.log.Errorf("Unable to encode event: %+v", err)
+		c.log.Debugf("Failed event: %v", event)
 		return false
 	}
 
 	if err := c.writeBuffer(serializedEvent); err != nil {
 		c.observer.WriteError(err)
-		logp.Critical("Unable to publish events to console: %v", err)
+		c.log.Errorf("Unable to publish events to console: %+v", err)
 		return false
 	}
 
 	if err := c.writeBuffer(nl); err != nil {
 		c.observer.WriteError(err)
-		logp.Critical("Error when appending newline to event: %v", err)
+		c.log.Errorf("Error when appending newline to event: %+v", err)
 		return false
 	}
 
@@ -159,4 +165,8 @@ func (c *console) writeBuffer(buf []byte) error {
 		written += n
 	}
 	return nil
+}
+
+func (c *console) String() string {
+	return "console"
 }

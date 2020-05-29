@@ -20,10 +20,11 @@ package instance
 import (
 	"time"
 
-	"github.com/satori/go.uuid"
+	"github.com/gofrs/uuid"
 
-	"github.com/elastic/beats/libbeat/monitoring"
-	"github.com/elastic/beats/libbeat/monitoring/report/log"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/monitoring"
+	"github.com/elastic/beats/v7/libbeat/monitoring/report/log"
 )
 
 var (
@@ -35,7 +36,11 @@ func init() {
 	beatMetrics = monitoring.Default.NewRegistry("beat")
 	monitoring.NewFunc(beatMetrics, "info", reportInfo, monitoring.Report)
 
-	ephemeralID = uuid.NewV4()
+	var err error
+	ephemeralID, err = uuid.NewV4()
+	if err != nil {
+		logp.Err("Error while generating ephemeral ID for Beat")
+	}
 }
 
 func reportInfo(_ monitoring.Mode, V monitoring.Visitor) {

@@ -21,16 +21,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
-	"github.com/elastic/beats/libbeat/outputs/codec"
-	"github.com/elastic/beats/libbeat/outputs/transport"
+	"github.com/elastic/beats/v7/libbeat/common/transport"
+	"github.com/elastic/beats/v7/libbeat/common/transport/tlscommon"
+	"github.com/elastic/beats/v7/libbeat/outputs/codec"
 )
 
 type redisConfig struct {
 	Password    string                `config:"password"`
 	Index       string                `config:"index"`
 	Key         string                `config:"key"`
-	Port        int                   `config:"port"`
 	LoadBalance bool                  `config:"loadbalance"`
 	Timeout     time.Duration         `config:"timeout"`
 	BulkMaxSize int                   `config:"bulk_max_size"`
@@ -40,11 +39,16 @@ type redisConfig struct {
 	Codec       codec.Config          `config:"codec"`
 	Db          int                   `config:"db"`
 	DataType    string                `config:"datatype"`
+	Backoff     backoff               `config:"backoff"`
+}
+
+type backoff struct {
+	Init time.Duration
+	Max  time.Duration
 }
 
 var (
 	defaultConfig = redisConfig{
-		Port:        6379,
 		LoadBalance: true,
 		Timeout:     5 * time.Second,
 		BulkMaxSize: 2048,
@@ -52,6 +56,10 @@ var (
 		TLS:         nil,
 		Db:          0,
 		DataType:    "list",
+		Backoff: backoff{
+			Init: 1 * time.Second,
+			Max:  60 * time.Second,
+		},
 	}
 )
 

@@ -21,9 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strings"
 
-	"github.com/elastic/beats/libbeat/publisher"
-	"github.com/elastic/beats/libbeat/testing"
+	"github.com/elastic/beats/v7/libbeat/publisher"
+	"github.com/elastic/beats/v7/libbeat/testing"
 )
 
 type failoverClient struct {
@@ -108,4 +109,14 @@ func (f *failoverClient) Test(d testing.Driver) {
 			c.Test(d)
 		})
 	}
+}
+
+func (f *failoverClient) String() string {
+	names := make([]string, len(f.clients))
+
+	for i, client := range f.clients {
+		names[i] = client.String()
+	}
+
+	return "failover(" + strings.Join(names, ",") + ")"
 }

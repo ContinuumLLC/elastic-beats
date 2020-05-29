@@ -36,62 +36,67 @@ var (
 )
 
 var tlsCipherSuites = map[string]tlsCipherSuite{
+	// ECDHE-ECDSA
 	"ECDHE-ECDSA-AES-128-CBC-SHA":    tlsCipherSuite(tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA),
+	"ECDHE-ECDSA-AES-128-CBC-SHA256": tlsCipherSuite(tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256),
 	"ECDHE-ECDSA-AES-128-GCM-SHA256": tlsCipherSuite(tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256),
 	"ECDHE-ECDSA-AES-256-CBC-SHA":    tlsCipherSuite(tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA),
 	"ECDHE-ECDSA-AES-256-GCM-SHA384": tlsCipherSuite(tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384),
+	"ECDHE-ECDSA-CHACHA20-POLY1305":  tlsCipherSuite(tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305),
 	"ECDHE-ECDSA-RC4-128-SHA":        tlsCipherSuite(tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA),
-	"ECDHE-RSA-3DES-CBC3-SHA":        tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA),
-	"ECDHE-RSA-AES-128-CBC-SHA":      tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA),
-	"ECDHE-RSA-AES-128-GCM-SHA256":   tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256),
-	"ECDHE-RSA-AES-256-CBC-SHA":      tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA),
-	"ECDHE-RSA-AES-256-GCM-SHA384":   tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384),
-	"ECDHE-RSA-RC4-128-SHA":          tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA),
-	"RSA-3DES-CBC3-SHA":              tlsCipherSuite(tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA),
-	"RSA-AES-128-CBC-SHA":            tlsCipherSuite(tls.TLS_RSA_WITH_AES_128_CBC_SHA),
-	"RSA-AES-128-GCM-SHA256":         tlsCipherSuite(tls.TLS_RSA_WITH_AES_128_GCM_SHA256),
-	"RSA-AES-256-CBC-SHA":            tlsCipherSuite(tls.TLS_RSA_WITH_AES_256_CBC_SHA),
-	"RSA-AES-256-GCM-SHA384":         tlsCipherSuite(tls.TLS_RSA_WITH_AES_256_GCM_SHA384),
-	"RSA-RC4-128-SHA":                tlsCipherSuite(tls.TLS_RSA_WITH_RC4_128_SHA),
+
+	// ECDHE-RSA
+	"ECDHE-RSA-3DES-CBC3-SHA":      tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA),
+	"ECDHE-RSA-AES-128-CBC-SHA":    tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA),
+	"ECDHE-RSA-AES-128-CBC-SHA256": tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256),
+	"ECDHE-RSA-AES-128-GCM-SHA256": tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256),
+	"ECDHE-RSA-AES-256-CBC-SHA":    tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA),
+	"ECDHE-RSA-AES-256-GCM-SHA384": tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384),
+	"ECDHE-RSA-CHACHA20-POLY1205":  tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305),
+	"ECDHE-RSA-RC4-128-SHA":        tlsCipherSuite(tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA),
+
+	// RSA-X
+	"RSA-RC4-128-SHA":   tlsCipherSuite(tls.TLS_RSA_WITH_RC4_128_SHA),
+	"RSA-3DES-CBC3-SHA": tlsCipherSuite(tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA),
+
+	// RSA-AES
+	"RSA-AES-128-CBC-SHA":    tlsCipherSuite(tls.TLS_RSA_WITH_AES_128_CBC_SHA),
+	"RSA-AES-128-CBC-SHA256": tlsCipherSuite(tls.TLS_RSA_WITH_AES_128_CBC_SHA256),
+	"RSA-AES-128-GCM-SHA256": tlsCipherSuite(tls.TLS_RSA_WITH_AES_128_GCM_SHA256),
+	"RSA-AES-256-CBC-SHA":    tlsCipherSuite(tls.TLS_RSA_WITH_AES_256_CBC_SHA),
+	"RSA-AES-256-GCM-SHA384": tlsCipherSuite(tls.TLS_RSA_WITH_AES_256_GCM_SHA384),
 }
 
 var tlsCipherSuitesInverse = make(map[tlsCipherSuite]string, len(tlsCipherSuites))
+var tlsRenegotiationSupportTypesInverse = make(map[tlsRenegotiationSupport]string, len(tlsRenegotiationSupportTypes))
+var tlsVerificationModesInverse = make(map[TLSVerificationMode]string, len(tlsVerificationModes))
 
 // Init creates a inverse representation of the values mapping.
 func init() {
 	for cipherName, i := range tlsCipherSuites {
 		tlsCipherSuitesInverse[i] = cipherName
 	}
+
+	for name, t := range tlsRenegotiationSupportTypes {
+		tlsRenegotiationSupportTypesInverse[t] = name
+	}
+
+	for name, t := range tlsVerificationModes {
+		tlsVerificationModesInverse[t] = name
+	}
 }
 
 var tlsCurveTypes = map[string]tlsCurveType{
-	"P-256": tlsCurveType(tls.CurveP256),
-	"P-384": tlsCurveType(tls.CurveP384),
-	"P-521": tlsCurveType(tls.CurveP521),
+	"P-256":  tlsCurveType(tls.CurveP256),
+	"P-384":  tlsCurveType(tls.CurveP384),
+	"P-521":  tlsCurveType(tls.CurveP521),
+	"X25519": tlsCurveType(tls.X25519),
 }
 
 var tlsRenegotiationSupportTypes = map[string]tlsRenegotiationSupport{
 	"never":  tlsRenegotiationSupport(tls.RenegotiateNever),
 	"once":   tlsRenegotiationSupport(tls.RenegotiateOnceAsClient),
 	"freely": tlsRenegotiationSupport(tls.RenegotiateFreelyAsClient),
-}
-
-// TLSVersion type for TLS version.
-type TLSVersion uint16
-
-// Define all the possible TLS version.
-const (
-	TLSVersionSSL30 TLSVersion = tls.VersionSSL30
-	TLSVersion10    TLSVersion = tls.VersionTLS10
-	TLSVersion11    TLSVersion = tls.VersionTLS11
-	TLSVersion12    TLSVersion = tls.VersionTLS12
-)
-
-// TLSDefaultVersions list of versions of TLS we should support.
-var TLSDefaultVersions = []TLSVersion{
-	TLSVersion10,
-	TLSVersion11,
-	TLSVersion12,
 }
 
 type tlsClientAuth int
@@ -106,22 +111,6 @@ var tlsClientAuthTypes = map[string]tlsClientAuth{
 	"none":     tlsClientAuthNone,
 	"optional": tlsClientAuthOptional,
 	"required": tlsClientAuthRequired,
-}
-
-var tlsProtocolVersions = map[string]TLSVersion{
-	"SSLv3":   TLSVersionSSL30,
-	"SSLv3.0": TLSVersionSSL30,
-	"TLSv1":   TLSVersion10,
-	"TLSv1.0": TLSVersion10,
-	"TLSv1.1": TLSVersion11,
-	"TLSv1.2": TLSVersion12,
-}
-
-var tlsProtocolVersionsInverse = map[TLSVersion]string{
-	TLSVersionSSL30: "SSLv3",
-	TLSVersion10:    "TLSv1.0",
-	TLSVersion11:    "TLSv1.1",
-	TLSVersion12:    "TLSv1.2",
 }
 
 // TLSVerificationMode represents the type of verification to do on the remote host,
@@ -140,24 +129,6 @@ const (
 	// VerifyCertificate
 )
 
-func (v TLSVersion) String() string {
-	if s, ok := tlsProtocolVersionsInverse[v]; ok {
-		return s
-	}
-	return "unknown"
-}
-
-//Unpack transforms the string into a constant.
-func (v *TLSVersion) Unpack(s string) error {
-	version, found := tlsProtocolVersions[s]
-	if !found {
-		return fmt.Errorf("invalid tls version '%v'", s)
-	}
-
-	*v = version
-	return nil
-}
-
 var tlsVerificationModes = map[string]TLSVerificationMode{
 	"":     VerifyFull,
 	"full": VerifyFull,
@@ -166,16 +137,18 @@ var tlsVerificationModes = map[string]TLSVerificationMode{
 }
 
 func (m TLSVerificationMode) String() string {
-	modes := map[TLSVerificationMode]string{
-		VerifyFull: "full",
-		// VerifyCertificate: "certificate",
-		VerifyNone: "none",
-	}
-
-	if s, ok := modes[m]; ok {
+	if s, ok := tlsVerificationModesInverse[m]; ok {
 		return s
 	}
 	return "unknown"
+}
+
+// MarshalText marshal the verification mode into a human readable value.
+func (m TLSVerificationMode) MarshalText() ([]byte, error) {
+	if s, ok := tlsVerificationModesInverse[m]; ok {
+		return []byte(s), nil
+	}
+	return nil, fmt.Errorf("could not marshal '%+v' to text", m)
 }
 
 // Unpack unpacks the string into constants.
@@ -262,11 +235,19 @@ func (r *tlsRenegotiationSupport) Unpack(s string) error {
 	return nil
 }
 
+func (r tlsRenegotiationSupport) MarshalText() ([]byte, error) {
+	if t, found := tlsRenegotiationSupportTypesInverse[r]; found {
+		return []byte(t), nil
+	}
+
+	return nil, fmt.Errorf("could not marshal '%+v' to text", r)
+}
+
 // CertificateConfig define a common set of fields for a certificate.
 type CertificateConfig struct {
-	Certificate string `config:"certificate"`
-	Key         string `config:"key"`
-	Passphrase  string `config:"key_passphrase"`
+	Certificate string `config:"certificate" yaml:"certificate,omitempty"`
+	Key         string `config:"key" yaml:"key,omitempty"`
+	Passphrase  string `config:"key_passphrase" yaml:"key_passphrase,omitempty"`
 }
 
 // Validate validates the CertificateConfig

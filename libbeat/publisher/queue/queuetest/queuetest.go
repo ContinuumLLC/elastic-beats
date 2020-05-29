@@ -21,8 +21,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/publisher/queue"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/publisher/queue"
 )
 
 // QueueFactory is used to create a per test queue instance.
@@ -63,7 +63,12 @@ func TestSingleProducerConsumer(
 	}
 
 	for _, test := range tests {
-		t.Run(test.name, withLogOutput(func(t *testing.T) {
+		verbose := testing.Verbose()
+		t.Run(test.name, withOptLogOutput(verbose, func(t *testing.T) {
+			if !verbose {
+				t.Parallel()
+			}
+
 			log := NewTestLogger(t)
 			log.Debug("run test: ", test.name)
 
@@ -206,7 +211,12 @@ func TestMultiProducerConsumer(
 	}
 
 	for _, test := range tests {
-		t.Run(test.name, withLogOutput(func(t *testing.T) {
+		verbose := testing.Verbose()
+		t.Run(test.name, withOptLogOutput(verbose, func(t *testing.T) {
+			if !verbose {
+				t.Parallel()
+			}
+
 			log := NewTestLogger(t)
 			log.Debug("run test: ", test.name)
 

@@ -23,20 +23,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+var defaultDetails = Details{Stability: Stable}
+
 func TestRegister(t *testing.T) {
 	f := func() {}
 
 	t.Run("when the factory is nil", func(t *testing.T) {
-		r := newRegistry()
-		err := r.Register(New("outputs", "null", nil, Stable))
+		r := NewRegistry()
+		err := r.Register(New("outputs", "null", nil, defaultDetails))
 		if !assert.Error(t, err) {
 			return
 		}
 	})
 
 	t.Run("namespace and feature doesn't exist", func(t *testing.T) {
-		r := newRegistry()
-		err := r.Register(New("outputs", "null", f, Stable))
+		r := NewRegistry()
+		err := r.Register(New("outputs", "null", f, defaultDetails))
 		if !assert.NoError(t, err) {
 			return
 		}
@@ -45,9 +47,9 @@ func TestRegister(t *testing.T) {
 	})
 
 	t.Run("namespace exists and feature doesn't exist", func(t *testing.T) {
-		r := newRegistry()
-		r.Register(New("processor", "bar", f, Stable))
-		err := r.Register(New("processor", "foo", f, Stable))
+		r := NewRegistry()
+		r.Register(New("processor", "bar", f, defaultDetails))
+		err := r.Register(New("processor", "foo", f, defaultDetails))
 		if !assert.NoError(t, err) {
 			return
 		}
@@ -56,9 +58,9 @@ func TestRegister(t *testing.T) {
 	})
 
 	t.Run("namespace exists and feature exists and not the same factory", func(t *testing.T) {
-		r := newRegistry()
-		r.Register(New("processor", "foo", func() {}, Stable))
-		err := r.Register(New("processor", "foo", f, Stable))
+		r := NewRegistry()
+		r.Register(New("processor", "foo", func() {}, defaultDetails))
+		err := r.Register(New("processor", "foo", f, defaultDetails))
 		if !assert.Error(t, err) {
 			return
 		}
@@ -66,8 +68,8 @@ func TestRegister(t *testing.T) {
 	})
 
 	t.Run("when the exact feature is already registered", func(t *testing.T) {
-		feature := New("processor", "foo", f, Stable)
-		r := newRegistry()
+		feature := New("processor", "foo", f, defaultDetails)
+		r := NewRegistry()
 		r.Register(feature)
 		err := r.Register(feature)
 		if !assert.NoError(t, err) {
@@ -80,9 +82,9 @@ func TestRegister(t *testing.T) {
 func TestFeature(t *testing.T) {
 	f := func() {}
 
-	r := newRegistry()
-	r.Register(New("processor", "foo", f, Stable))
-	r.Register(New("HOLA", "fOO", f, Stable))
+	r := NewRegistry()
+	r.Register(New("processor", "foo", f, defaultDetails))
+	r.Register(New("HOLA", "fOO", f, defaultDetails))
 
 	t.Run("when namespace and feature are present", func(t *testing.T) {
 		feature, err := r.Lookup("processor", "foo")
@@ -110,10 +112,10 @@ func TestFeature(t *testing.T) {
 func TestLookup(t *testing.T) {
 	f := func() {}
 
-	r := newRegistry()
-	r.Register(New("processor", "foo", f, Stable))
-	r.Register(New("processor", "foo2", f, Stable))
-	r.Register(New("HELLO", "fOO", f, Stable))
+	r := NewRegistry()
+	r.Register(New("processor", "foo", f, defaultDetails))
+	r.Register(New("processor", "foo2", f, defaultDetails))
+	r.Register(New("HELLO", "fOO", f, defaultDetails))
 
 	t.Run("when namespace and feature are present", func(t *testing.T) {
 		features, err := r.LookupAll("processor")
@@ -144,8 +146,8 @@ func TestUnregister(t *testing.T) {
 	f := func() {}
 
 	t.Run("when the namespace and the feature exists", func(t *testing.T) {
-		r := newRegistry()
-		r.Register(New("processor", "foo", f, Stable))
+		r := NewRegistry()
+		r.Register(New("processor", "foo", f, defaultDetails))
 		assert.Equal(t, 1, r.Size())
 		err := r.Unregister("processor", "foo")
 		if !assert.NoError(t, err) {
@@ -155,8 +157,8 @@ func TestUnregister(t *testing.T) {
 	})
 
 	t.Run("when the namespace exist and the feature doesn't", func(t *testing.T) {
-		r := newRegistry()
-		r.Register(New("processor", "foo", f, Stable))
+		r := NewRegistry()
+		r.Register(New("processor", "foo", f, defaultDetails))
 		assert.Equal(t, 1, r.Size())
 		err := r.Unregister("processor", "bar")
 		if assert.Error(t, err) {
@@ -166,13 +168,43 @@ func TestUnregister(t *testing.T) {
 	})
 
 	t.Run("when the namespace doesn't exists", func(t *testing.T) {
-		r := newRegistry()
-		r.Register(New("processor", "foo", f, Stable))
+		r := NewRegistry()
+		r.Register(New("processor", "foo", f, defaultDetails))
 		assert.Equal(t, 1, r.Size())
 		err := r.Unregister("outputs", "bar")
 		if assert.Error(t, err) {
 			return
 		}
 		assert.Equal(t, 0, r.Size())
+	})
+}
+
+func TestOverwrite(t *testing.T) {
+	t.Run("when the feature doesn't exist", func(t *testing.T) {
+		f := func() {}
+		r := NewRegistry()
+		assert.Equal(t, 0, r.Size())
+		r.Overwrite(New("processor", "foo", f, defaultDetails))
+		assert.Equal(t, 1, r.Size())
+	})
+
+	t.Run("overwrite when the feature exists", func(t *testing.T) {
+		f := func() {}
+		r := NewRegistry()
+		r.Register(New("processor", "foo", f, defaultDetails))
+		assert.Equal(t, 1, r.Size())
+
+		check := 42
+		r.Overwrite(New("processor", "foo", check, defaultDetails))
+		assert.Equal(t, 1, r.Size())
+
+		feature, err := r.Lookup("processor", "foo")
+		if !assert.NoError(t, err) {
+			return
+		}
+
+		v, ok := feature.Factory().(int)
+		assert.True(t, ok)
+		assert.Equal(t, 42, v)
 	})
 }

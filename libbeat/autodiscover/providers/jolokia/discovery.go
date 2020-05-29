@@ -24,13 +24,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofrs/uuid"
 	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/bus"
-	s "github.com/elastic/beats/libbeat/common/schema"
-	c "github.com/elastic/beats/libbeat/common/schema/mapstriface"
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/common/bus"
+	s "github.com/elastic/beats/v7/libbeat/common/schema"
+	c "github.com/elastic/beats/v7/libbeat/common/schema/mapstriface"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 // Jolokia Discovery query
@@ -72,15 +73,19 @@ var messageSchema = s.Schema{
 
 // Event is a Jolokia Discovery event
 type Event struct {
-	Type    string
-	Message common.MapStr
+	ProviderUUID uuid.UUID
+	Type         string
+	AgentID      string
+	Message      common.MapStr
 }
 
 // BusEvent converts a Jolokia Discovery event to a autodiscover bus event
 func (e *Event) BusEvent() bus.Event {
 	event := bus.Event{
-		e.Type:    true,
-		"jolokia": e.Message,
+		e.Type:     true,
+		"provider": e.ProviderUUID,
+		"id":       e.AgentID,
+		"jolokia":  e.Message,
 		"meta": common.MapStr{
 			"jolokia": e.Message,
 		},
@@ -93,12 +98,17 @@ func (e *Event) BusEvent() bus.Event {
 type Instance struct {
 	LastSeen      time.Time
 	LastInterface *InterfaceConfig
+	AgentID       string
 	Message       common.MapStr
 }
 
 // Discovery controls the Jolokia Discovery probes
 type Discovery struct {
 	sync.Mutex
+
+	log *logp.Logger
+
+	ProviderUUID uuid.UUID
 
 	Interfaces []InterfaceConfig
 
@@ -113,6 +123,9 @@ func (d *Discovery) Start() {
 	d.instances = make(map[string]*Instance)
 	d.events = make(chan Event)
 	d.stop = make(chan struct{})
+	if d.log == nil {
+		d.log = logp.NewLogger("jolokia")
+	}
 	go d.run()
 }
 
@@ -190,9 +203,11 @@ var discoveryAddress = net.UDPAddr{IP: net.IPv4(239, 192, 48, 84), Port: 24884}
 var queryMessage = []byte(`{"type":"query"}`)
 
 func (d *Discovery) sendProbe(config InterfaceConfig) {
+	log := d.log
+
 	interfaces, err := d.interfaces(config.Name)
 	if err != nil {
-		logp.Err("failed to get interfaces: ", err)
+		log.Errorf("failed to get interfaces: %+v", err)
 		return
 	}
 
@@ -200,7 +215,7 @@ func (d *Discovery) sendProbe(config InterfaceConfig) {
 	for _, i := range interfaces {
 		ip, err := getIPv4Addr(i)
 		if err != nil {
-			logp.Err(err.Error())
+			log.Error(err.Error())
 			continue
 		}
 		if ip == nil {
@@ -213,7 +228,7 @@ func (d *Discovery) sendProbe(config InterfaceConfig) {
 
 			conn, err := net.ListenPacket("udp4", net.JoinHostPort(ip.String(), "0"))
 			if err != nil {
-				logp.Err(err.Error())
+				log.Error(err.Error())
 				return
 			}
 			defer conn.Close()
@@ -226,7 +241,7 @@ func (d *Discovery) sendProbe(config InterfaceConfig) {
 			conn.SetDeadline(time.Now().Add(timeout))
 
 			if _, err := conn.WriteTo(queryMessage, &discoveryAddress); err != nil {
-				logp.Err(err.Error())
+				log.Error(err.Error())
 				return
 			}
 
@@ -235,19 +250,19 @@ func (d *Discovery) sendProbe(config InterfaceConfig) {
 				n, _, err := conn.ReadFrom(b)
 				if err != nil {
 					if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
-						logp.Err(err.Error())
+						log.Error(err.Error())
 					}
 					return
 				}
 				m := make(map[string]interface{})
 				err = json.Unmarshal(b[:n], &m)
 				if err != nil {
-					logp.Err(err.Error())
+					log.Error(err.Error())
 					continue
 				}
 				message, err := messageSchema.Apply(m, s.FailOnRequired)
 				if err != nil {
-					logp.Err(err.Error())
+					log.Error(err.Error())
 					continue
 				}
 				d.update(config, message)
@@ -258,14 +273,16 @@ func (d *Discovery) sendProbe(config InterfaceConfig) {
 }
 
 func (d *Discovery) update(config InterfaceConfig, message common.MapStr) {
+	log := d.log
+
 	v, err := message.GetValue("agent.id")
 	if err != nil {
-		logp.Err("failed to update agent without id: " + err.Error())
+		log.Error("failed to update agent without id: ", err)
 		return
 	}
 	agentID, ok := v.(string)
 	if len(agentID) == 0 || !ok {
-		logp.Err("incorrect or empty agent id in Jolokia Discovery response")
+		log.Error("incorrect or empty agent id in Jolokia Discovery response")
 		return
 	}
 
@@ -273,7 +290,7 @@ func (d *Discovery) update(config InterfaceConfig, message common.MapStr) {
 	if err != nil || url == nil {
 		// This can happen if Jolokia agent is initializing and it still
 		// doesn't know its URL
-		logp.Info("agent %s without url, ignoring by now", agentID)
+		log.Infof("agent %s without url, ignoring by now", agentID)
 		return
 	}
 
@@ -281,9 +298,9 @@ func (d *Discovery) update(config InterfaceConfig, message common.MapStr) {
 	defer d.Unlock()
 	i, found := d.instances[agentID]
 	if !found {
-		i = &Instance{Message: message}
+		i = &Instance{Message: message, AgentID: agentID}
 		d.instances[agentID] = i
-		d.events <- Event{"start", message}
+		d.events <- Event{d.ProviderUUID, "start", agentID, message}
 	}
 	i.LastSeen = time.Now()
 	i.LastInterface = &config
@@ -295,7 +312,7 @@ func (d *Discovery) checkStopped() {
 
 	for id, i := range d.instances {
 		if time.Since(i.LastSeen) > i.LastInterface.GracePeriod {
-			d.events <- Event{"stop", i.Message}
+			d.events <- Event{d.ProviderUUID, "stop", i.AgentID, i.Message}
 			delete(d.instances, id)
 		}
 	}

@@ -24,7 +24,8 @@ import (
 	"flag"
 	"strings"
 
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/common/cfgwarn"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 type pluginList struct {
@@ -38,7 +39,7 @@ func (p *pluginList) String() string {
 func (p *pluginList) Set(v string) error {
 	for _, path := range p.paths {
 		if path == v {
-			logp.Warn("%s is already a registered plugin")
+			logp.Warn("%s is already a registered plugin", path)
 			return nil
 		}
 	}
@@ -54,7 +55,7 @@ func init() {
 
 func Initialize() error {
 	if len(plugins.paths) > 0 {
-		logp.Warn("EXPERIMENTAL: loadable plugin support is experimental")
+		cfgwarn.Experimental("loadable plugin support is experimental")
 	}
 
 	for _, path := range plugins.paths {

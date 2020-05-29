@@ -21,8 +21,27 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
+	errw "github.com/pkg/errors"
+
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
+)
+
+// Format encodes the type of format to report monitoring data in. This
+// is currently only being used by the elaticsearch reporter.
+// This is a hack that is necessary so we can map certain monitoring
+// configuration options to certain behaviors in reporters. Depending on
+// the configuration option used, the correct format is set, and reporters
+// that know how to interpret the format use it to choose the appropriate
+// reporting behavior.
+type Format int
+
+// Enumerations of various Formats. A reporter can choose whether to
+// interpret this setting or not, and if so, how to interpret it.
+const (
+	FormatUnknown Format = iota // to protect against zero-value errors
+	FormatXPackMonitoringBulk
+	FormatBulk
 )
 
 type config struct {
@@ -30,11 +49,21 @@ type config struct {
 	Reporter common.ConfigNamespace `config:",inline"`
 }
 
+type Settings struct {
+	DefaultUsername string
+	Format          Format
+	ClusterUUID     string
+}
+
 type Reporter interface {
 	Stop()
 }
 
-type ReporterFactory func(beat.Info, *common.Config) (Reporter, error)
+type ReporterFactory func(beat.Info, Settings, *common.Config) (Reporter, error)
+
+type hostsCfg struct {
+	Hosts []string `config:"hosts"`
+}
 
 var (
 	defaultConfig = config{}
@@ -51,10 +80,11 @@ func RegisterReporterFactory(name string, f ReporterFactory) {
 
 func New(
 	beat beat.Info,
+	settings Settings,
 	cfg *common.Config,
 	outputs common.ConfigNamespace,
 ) (Reporter, error) {
-	name, cfg, err := getReporterConfig(cfg, outputs)
+	name, cfg, err := getReporterConfig(cfg, settings, outputs)
 	if err != nil {
 		return nil, err
 	}
@@ -64,14 +94,15 @@ func New(
 		return nil, fmt.Errorf("unknown reporter type '%v'", name)
 	}
 
-	return f(beat, cfg)
+	return f(beat, settings, cfg)
 }
 
 func getReporterConfig(
-	cfg *common.Config,
+	monitoringConfig *common.Config,
+	settings Settings,
 	outputs common.ConfigNamespace,
 ) (string, *common.Config, error) {
-	cfg = collectSubObject(cfg)
+	cfg := collectSubObject(monitoringConfig)
 	config := defaultConfig
 	if err := cfg.Unpack(&config); err != nil {
 		return "", nil, err
@@ -86,12 +117,10 @@ func getReporterConfig(
 		// merge reporter config with output config if both are present
 		if outCfg := outputs.Config(); outputs.Name() == name && outCfg != nil {
 			// require monitoring to not configure any hosts if output is configured:
-			hosts := struct {
-				Hosts []string `config:"hosts"`
-			}{}
+			hosts := hostsCfg{}
 			rc.Unpack(&hosts)
 
-			if len(hosts.Hosts) > 0 {
+			if settings.Format == FormatXPackMonitoringBulk && len(hosts.Hosts) > 0 {
 				pathMonHosts := rc.PathOf("hosts")
 				pathOutHost := outCfg.PathOf("hosts")
 				err := fmt.Errorf("'%v' and '%v' are configured", pathMonHosts, pathOutHost)
@@ -102,6 +131,13 @@ func getReporterConfig(
 			if err != nil {
 				return "", nil, err
 			}
+
+			// Make sure hosts from reporter configuration get precedence over hosts
+			// from output configuration
+			if err := mergeHosts(merged, outCfg, rc); err != nil {
+				return "", nil, err
+			}
+
 			rc = merged
 		}
 
@@ -129,4 +165,45 @@ func collectSubObject(cfg *common.Config) *common.Config {
 		}
 	}
 	return out
+}
+
+func mergeHosts(merged, outCfg, reporterCfg *common.Config) error {
+	if merged == nil {
+		merged = common.NewConfig()
+	}
+
+	outputHosts := hostsCfg{}
+	if outCfg != nil {
+		if err := outCfg.Unpack(&outputHosts); err != nil {
+			return errw.Wrap(err, "unable to parse hosts from output config")
+		}
+	}
+
+	reporterHosts := hostsCfg{}
+	if reporterCfg != nil {
+		if err := reporterCfg.Unpack(&reporterHosts); err != nil {
+			return errw.Wrap(err, "unable to parse hosts from reporter config")
+		}
+	}
+
+	if len(outputHosts.Hosts) == 0 && len(reporterHosts.Hosts) == 0 {
+		return nil
+	}
+
+	// Give precedence to reporter hosts over output hosts
+	var newHostsCfg *common.Config
+	var err error
+	if len(reporterHosts.Hosts) > 0 {
+		newHostsCfg, err = common.NewConfigFrom(reporterHosts.Hosts)
+	} else {
+		newHostsCfg, err = common.NewConfigFrom(outputHosts.Hosts)
+	}
+	if err != nil {
+		return errw.Wrap(err, "unable to make config from new hosts")
+	}
+
+	if err := merged.SetChild("hosts", -1, newHostsCfg); err != nil {
+		return errw.Wrap(err, "unable to set new hosts into merged config")
+	}
+	return nil
 }

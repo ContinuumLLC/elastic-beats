@@ -18,56 +18,103 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 
-	"github.com/elastic/beats/libbeat/generator/fields"
+	"github.com/elastic/beats/v7/libbeat/generator/fields"
+	"github.com/elastic/beats/v7/libbeat/mapping"
 )
 
 func main() {
-	esBeatsPath := flag.String("es_beats_path", "..", "Path to elastic/beats")
-	beatPath := flag.String("beat_path", ".", "Path to your Beat")
+	var (
+		esBeatsPath string
+		beatPath    string
+		output      string
+	)
+	flag.StringVar(&esBeatsPath, "es_beats_path", "..", "Path to elastic/beats")
+	flag.StringVar(&beatPath, "beat_path", ".", "Path to your Beat")
+	flag.StringVar(&output, "out", "-", "Path to output. Default: stdout")
 	flag.Parse()
 
-	beatFieldsPath := flag.Args()
-	name := filepath.Base(*beatPath)
+	beatFieldsPaths := flag.Args()
+	name := filepath.Base(beatPath)
 
-	err := os.MkdirAll(filepath.Join(*beatPath, "_meta"), 0744)
-	if err != nil {
-		fmt.Printf("Cannot create _meta dir for %s: %v\n", name, err)
+	if beatPath == "" {
+		fmt.Fprintf(os.Stderr, "beat_path cannot be empty")
 		os.Exit(1)
 	}
 
-	if len(beatFieldsPath) == 0 {
-		fmt.Println("No field files to collect")
-		err = fields.AppendFromLibbeat(*esBeatsPath, *beatPath)
-		if err != nil {
-			fmt.Printf("Cannot generate global fields.yml for %s: %v\n", name, err)
-			os.Exit(2)
+	esBeats, err := os.Open(esBeatsPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening elastic/beats: %+v\n", err)
+		os.Exit(1)
+	}
+	beat, err := os.Open(beatPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening target Beat: %+v\n", err)
+		os.Exit(1)
+	}
+	esBeatsInfo, err := esBeats.Stat()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting file info of elastic/beats: %+v\n", err)
+		os.Exit(1)
+	}
+	beatInfo, err := beat.Stat()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting file info of target Beat: %+v\n", err)
+		os.Exit(1)
+	}
+	beat.Close()
+	esBeats.Close()
+
+	// If a community Beat does not have its own fields.yml file, it still requires
+	// the fields coming from libbeat to generate e.g assets. In case of Elastic Beats,
+	// it's not a problem because all of them has unique fields.yml files somewhere.
+	if len(beatFieldsPaths) == 0 && os.SameFile(esBeatsInfo, beatInfo) {
+		if output != "-" {
+			fmt.Fprintln(os.Stderr, "No field files to collect")
 		}
 		return
 	}
 
-	if *beatPath == "" {
-		fmt.Println("beat_path cannot be empty")
-		os.Exit(1)
+	var fieldsFiles []*fields.YmlFile
+	for _, fieldsFilePath := range beatFieldsPaths {
+		fieldsFile, err := fields.CollectModuleFiles(fieldsFilePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot collect fields.yml files: %+v\n", err)
+			os.Exit(2)
+		}
+
+		fieldsFiles = append(fieldsFiles, fieldsFile...)
 	}
 
-	pathToModules := filepath.Join(*beatPath, beatFieldsPath[0])
-	fieldFiles, err := fields.CollectModuleFiles(pathToModules)
+	var buffer bytes.Buffer
+	err = fields.Generate(esBeatsPath, beatPath, fieldsFiles, &buffer)
 	if err != nil {
-		fmt.Printf("Cannot collect fields.yml files: %v\n", err)
-		os.Exit(2)
-
-	}
-
-	err = fields.Generate(*esBeatsPath, *beatPath, fieldFiles)
-	if err != nil {
-		fmt.Printf("Cannot generate global fields.yml file for %s: %v\n", name, err)
+		fmt.Fprintf(os.Stderr, "Cannot generate global fields.yml file for %s: %+v\n", name, err)
 		os.Exit(3)
 	}
 
-	fmt.Printf("Generated fields.yml for %s\n", name)
+	_, err = mapping.LoadFields(buffer.Bytes())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Generated global fields.yml file for %s is invalid: %+v\n", name, err)
+		os.Exit(3)
+	}
+
+	if output == "-" {
+		fmt.Print(buffer.String())
+		return
+	}
+
+	err = ioutil.WriteFile(output, buffer.Bytes(), 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot write global fields.yml file for %s: %v", name, err)
+	}
+
+	outputPath, _ := filepath.Abs(output)
+	fmt.Fprintf(os.Stderr, "Generated fields.yml for %s to %s\n", name, outputPath)
 }

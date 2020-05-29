@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// +build linux darwin windows
+
 package add_docker_metadata
 
 import (
@@ -26,19 +28,20 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/docker"
-	"github.com/elastic/beats/libbeat/common/safemapstr"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/processors"
-	"github.com/elastic/beats/libbeat/processors/actions"
 	"github.com/elastic/gosigar/cgroup"
+
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/common/docker"
+	"github.com/elastic/beats/v7/libbeat/common/safemapstr"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/processors"
+	"github.com/elastic/beats/v7/libbeat/processors/actions"
 )
 
 const (
 	processorName         = "add_docker_metadata"
-	dockerContainerIDKey  = "docker.container.id"
+	dockerContainerIDKey  = "container.id"
 	cgroupCacheExpiration = 5 * time.Minute
 )
 
@@ -47,7 +50,7 @@ const (
 var processCgroupPaths = cgroup.ProcessCgroupPaths
 
 func init() {
-	processors.RegisterPlugin(processorName, newDockerMetadataProcessor)
+	processors.RegisterPlugin(processorName, New)
 }
 
 type addDockerMetadata struct {
@@ -56,38 +59,48 @@ type addDockerMetadata struct {
 	fields          []string
 	sourceProcessor processors.Processor
 
-	pidFields []string      // Field names that contain PIDs.
-	cgroups   *common.Cache // Cache of PID (int) to cgropus (map[string]string).
-	hostFS    string        // Directory where /proc is found
+	pidFields       []string      // Field names that contain PIDs.
+	cgroups         *common.Cache // Cache of PID (int) to cgropus (map[string]string).
+	hostFS          string        // Directory where /proc is found
+	dedot           bool          // If set to true, replace dots in labels with `_`.
+	dockerAvailable bool          // If Docker exists in env, then it is set to true
 }
 
-func newDockerMetadataProcessor(cfg *common.Config) (processors.Processor, error) {
-	return buildDockerMetadataProcessor(cfg, docker.NewWatcher)
+const selector = "add_docker_metadata"
+
+// New constructs a new add_docker_metadata processor.
+func New(cfg *common.Config) (processors.Processor, error) {
+	return buildDockerMetadataProcessor(logp.NewLogger(selector), cfg, docker.NewWatcher)
 }
 
-func buildDockerMetadataProcessor(cfg *common.Config, watcherConstructor docker.WatcherConstructor) (processors.Processor, error) {
+func buildDockerMetadataProcessor(log *logp.Logger, cfg *common.Config, watcherConstructor docker.WatcherConstructor) (processors.Processor, error) {
 	config := defaultConfig()
 	if err := cfg.Unpack(&config); err != nil {
 		return nil, errors.Wrapf(err, "fail to unpack the %v configuration", processorName)
 	}
 
-	watcher, err := watcherConstructor(config.Host, config.TLS, config.MatchShortID)
-	if err != nil {
-		return nil, err
-	}
+	var dockerAvailable bool
 
-	if err = watcher.Start(); err != nil {
-		return nil, err
+	watcher, err := watcherConstructor(log, config.Host, config.TLS, config.MatchShortID)
+	if err != nil {
+		dockerAvailable = false
+		log.Debugf("%v: docker environment not detected: %+v", processorName, err)
+	} else {
+		dockerAvailable = true
+		log.Debugf("%v: docker environment detected", processorName)
+		if err = watcher.Start(); err != nil {
+			return nil, errors.Wrap(err, "failed to start watcher")
+		}
 	}
 
 	// Use extract_field processor to get container ID from source file path.
 	var sourceProcessor processors.Processor
 	if config.MatchSource {
 		var procConf, _ = common.NewConfigFrom(map[string]interface{}{
-			"field":     "source",
-			"separator": "/",
+			"field":     "log.file.path",
+			"separator": string(os.PathSeparator),
 			"index":     config.SourceIndex,
-			"target":    "docker.container.id",
+			"target":    dockerContainerIDKey,
 		})
 		sourceProcessor, err = actions.NewExtractField(procConf)
 		if err != nil {
@@ -96,12 +109,14 @@ func buildDockerMetadataProcessor(cfg *common.Config, watcherConstructor docker.
 	}
 
 	return &addDockerMetadata{
-		log:             logp.NewLogger(processorName),
+		log:             log,
 		watcher:         watcher,
 		fields:          config.Fields,
 		sourceProcessor: sourceProcessor,
 		pidFields:       config.MatchPIDs,
 		hostFS:          config.HostFS,
+		dedot:           config.DeDot,
+		dockerAvailable: dockerAvailable,
 	}, nil
 }
 
@@ -117,12 +132,16 @@ func lazyCgroupCacheInit(d *addDockerMetadata) {
 }
 
 func (d *addDockerMetadata) Run(event *beat.Event) (*beat.Event, error) {
+	if !d.dockerAvailable {
+		return event, nil
+	}
 	var cid string
 	var err error
 
-	// Extract CID from the filepath contained in the "source" field.
+	// Extract CID from the filepath contained in the "log.file.path" field.
 	if d.sourceProcessor != nil {
-		if event.Fields["source"] != nil {
+		lfp, _ := event.Fields.GetValue("log.file.path")
+		if lfp != nil {
 			event, err = d.sourceProcessor.Run(event)
 			if err != nil {
 				d.log.Debugf("Error while extracting container ID from source path: %v", err)
@@ -165,23 +184,24 @@ func (d *addDockerMetadata) Run(event *beat.Event) (*beat.Event, error) {
 	container := d.watcher.Container(cid)
 	if container != nil {
 		meta := common.MapStr{}
-		metaIface, ok := event.Fields["docker"]
-		if ok {
-			meta = metaIface.(common.MapStr)
-		}
 
 		if len(container.Labels) > 0 {
 			labels := common.MapStr{}
 			for k, v := range container.Labels {
-				safemapstr.Put(labels, k, v)
+				if d.dedot {
+					label := common.DeDot(k)
+					labels.Put(label, v)
+				} else {
+					safemapstr.Put(labels, k, v)
+				}
 			}
 			meta.Put("container.labels", labels)
 		}
 
 		meta.Put("container.id", container.ID)
-		meta.Put("container.image", container.Image)
+		meta.Put("container.image.name", container.Image)
 		meta.Put("container.name", container.Name)
-		event.Fields["docker"] = meta
+		event.Fields.DeepUpdate(meta.Clone())
 	} else {
 		d.log.Debugf("Container not found: cid=%s", cid)
 	}

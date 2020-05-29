@@ -18,7 +18,8 @@
 package beat
 
 import (
-	"github.com/elastic/beats/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/management"
 )
 
 // Creator initializes and configures a new Beater instance used to execute
@@ -64,6 +65,8 @@ type Beat struct {
 	BeatConfig *common.Config // The beat's own configuration section
 
 	Fields []byte // Data from fields.yml
+
+	ConfigManager management.ConfigManager // config manager
 }
 
 // BeatConfig struct contains the basic configuration of every beat

@@ -25,41 +25,47 @@ import (
 
 	"github.com/Shopify/sarama"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/fmtstr"
-	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/monitoring"
-	"github.com/elastic/beats/libbeat/monitoring/adapter"
-	"github.com/elastic/beats/libbeat/outputs"
-	"github.com/elastic/beats/libbeat/outputs/codec"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/common/cfgwarn"
+	"github.com/elastic/beats/v7/libbeat/common/fmtstr"
+	"github.com/elastic/beats/v7/libbeat/common/kafka"
+	"github.com/elastic/beats/v7/libbeat/common/transport/kerberos"
+	"github.com/elastic/beats/v7/libbeat/common/transport/tlscommon"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/monitoring"
+	"github.com/elastic/beats/v7/libbeat/monitoring/adapter"
+	"github.com/elastic/beats/v7/libbeat/outputs/codec"
 )
 
 type kafkaConfig struct {
-	Hosts           []string                  `config:"hosts"               validate:"required"`
-	TLS             *tlscommon.Config         `config:"ssl"`
-	Timeout         time.Duration             `config:"timeout"             validate:"min=1"`
-	Metadata        metaConfig                `config:"metadata"`
-	Key             *fmtstr.EventFormatString `config:"key"`
-	Partition       map[string]*common.Config `config:"partition"`
-	KeepAlive       time.Duration             `config:"keep_alive"          validate:"min=0"`
-	MaxMessageBytes *int                      `config:"max_message_bytes"   validate:"min=1"`
-	RequiredACKs    *int                      `config:"required_acks"       validate:"min=-1"`
-	BrokerTimeout   time.Duration             `config:"broker_timeout"      validate:"min=1"`
-	Compression     string                    `config:"compression"`
-	Version         string                    `config:"version"`
-	BulkMaxSize     int                       `config:"bulk_max_size"`
-	MaxRetries      int                       `config:"max_retries"         validate:"min=-1,nonzero"`
-	ClientID        string                    `config:"client_id"`
-	ChanBufferSize  int                       `config:"channel_buffer_size" validate:"min=1"`
-	Username        string                    `config:"username"`
-	Password        string                    `config:"password"`
-	Codec           codec.Config              `config:"codec"`
+	Hosts              []string                  `config:"hosts"               validate:"required"`
+	TLS                *tlscommon.Config         `config:"ssl"`
+	Kerberos           *kerberos.Config          `config:"kerberos"`
+	Timeout            time.Duration             `config:"timeout"             validate:"min=1"`
+	Metadata           metaConfig                `config:"metadata"`
+	Key                *fmtstr.EventFormatString `config:"key"`
+	Partition          map[string]*common.Config `config:"partition"`
+	KeepAlive          time.Duration             `config:"keep_alive"          validate:"min=0"`
+	MaxMessageBytes    *int                      `config:"max_message_bytes"   validate:"min=1"`
+	RequiredACKs       *int                      `config:"required_acks"       validate:"min=-1"`
+	BrokerTimeout      time.Duration             `config:"broker_timeout"      validate:"min=1"`
+	Compression        string                    `config:"compression"`
+	CompressionLevel   int                       `config:"compression_level"`
+	Version            kafka.Version             `config:"version"`
+	BulkMaxSize        int                       `config:"bulk_max_size"`
+	BulkFlushFrequency time.Duration             `config:"bulk_flush_frequency"`
+	MaxRetries         int                       `config:"max_retries"         validate:"min=-1,nonzero"`
+	ClientID           string                    `config:"client_id"`
+	ChanBufferSize     int                       `config:"channel_buffer_size" validate:"min=1"`
+	Username           string                    `config:"username"`
+	Password           string                    `config:"password"`
+	Codec              codec.Config              `config:"codec"`
 }
 
 type metaConfig struct {
 	Retry       metaRetryConfig `config:"retry"`
 	RefreshFreq time.Duration   `config:"refresh_frequency" validate:"min=0"`
+	Full        bool            `config:"full"`
 }
 
 type metaRetryConfig struct {
@@ -78,29 +84,41 @@ var compressionModes = map[string]sarama.CompressionCodec{
 
 func defaultConfig() kafkaConfig {
 	return kafkaConfig{
-		Hosts:       nil,
-		TLS:         nil,
-		Timeout:     30 * time.Second,
-		BulkMaxSize: 2048,
+		Hosts:              nil,
+		TLS:                nil,
+		Kerberos:           nil,
+		Timeout:            30 * time.Second,
+		BulkMaxSize:        2048,
+		BulkFlushFrequency: 0,
 		Metadata: metaConfig{
 			Retry: metaRetryConfig{
 				Max:     3,
 				Backoff: 250 * time.Millisecond,
 			},
 			RefreshFreq: 10 * time.Minute,
+			Full:        false,
 		},
-		KeepAlive:       0,
-		MaxMessageBytes: nil, // use library default
-		RequiredACKs:    nil, // use library default
-		BrokerTimeout:   10 * time.Second,
-		Compression:     "gzip",
-		Version:         "1.0.0",
-		MaxRetries:      3,
-		ClientID:        "beats",
-		ChanBufferSize:  256,
-		Username:        "",
-		Password:        "",
+		KeepAlive:        0,
+		MaxMessageBytes:  nil, // use library default
+		RequiredACKs:     nil, // use library default
+		BrokerTimeout:    10 * time.Second,
+		Compression:      "gzip",
+		CompressionLevel: 4,
+		Version:          kafka.Version("1.0.0"),
+		MaxRetries:       3,
+		ClientID:         "beats",
+		ChanBufferSize:   256,
+		Username:         "",
+		Password:         "",
 	}
+}
+
+func readConfig(cfg *common.Config) (*kafkaConfig, error) {
+	c := defaultConfig()
+	if err := cfg.Unpack(&c); err != nil {
+		return nil, err
+	}
+	return &c, nil
 }
 
 func (c *kafkaConfig) Validate() error {
@@ -112,19 +130,26 @@ func (c *kafkaConfig) Validate() error {
 		return fmt.Errorf("compression mode '%v' unknown", c.Compression)
 	}
 
-	if _, ok := kafkaVersions[c.Version]; !ok {
-		return fmt.Errorf("unknown/unsupported kafka version '%v'", c.Version)
+	if err := c.Version.Validate(); err != nil {
+		return err
 	}
 
 	if c.Username != "" && c.Password == "" {
 		return fmt.Errorf("password must be set when username is configured")
 	}
 
+	if c.Compression == "gzip" {
+		lvl := c.CompressionLevel
+		if lvl != sarama.CompressionLevelDefault && !(0 <= lvl && lvl <= 9) {
+			return fmt.Errorf("compression_level must be between 0 and 9")
+		}
+	}
+
 	return nil
 }
 
-func newSaramaConfig(config *kafkaConfig) (*sarama.Config, error) {
-	partitioner, err := makePartitioner(config.Partition)
+func newSaramaConfig(log *logp.Logger, config *kafkaConfig) (*sarama.Config, error) {
+	partitioner, err := makePartitioner(log, config.Partition)
 	if err != nil {
 		return nil, err
 	}
@@ -138,14 +163,31 @@ func newSaramaConfig(config *kafkaConfig) (*sarama.Config, error) {
 	k.Net.WriteTimeout = timeout
 	k.Net.KeepAlive = config.KeepAlive
 	k.Producer.Timeout = config.BrokerTimeout
+	k.Producer.CompressionLevel = config.CompressionLevel
 
-	tls, err := outputs.LoadTLSConfig(config.TLS)
+	tls, err := tlscommon.LoadTLSConfig(config.TLS)
 	if err != nil {
 		return nil, err
 	}
 	if tls != nil {
 		k.Net.TLS.Enable = true
 		k.Net.TLS.Config = tls.BuildModuleConfig("")
+	}
+
+	if config.Kerberos != nil {
+		cfgwarn.Beta("Kerberos authentication for Kafka is beta.")
+
+		k.Net.SASL.Enable = true
+		k.Net.SASL.Mechanism = sarama.SASLTypeGSSAPI
+		k.Net.SASL.GSSAPI = sarama.GSSAPIConfig{
+			AuthType:           int(config.Kerberos.AuthType),
+			KeyTabPath:         config.Kerberos.KeyTabPath,
+			KerberosConfigPath: config.Kerberos.ConfigPath,
+			ServiceName:        config.Kerberos.ServiceName,
+			Username:           config.Kerberos.Username,
+			Password:           config.Kerberos.Password,
+			Realm:              config.Kerberos.Realm,
+		}
 	}
 
 	if config.Username != "" {
@@ -158,6 +200,7 @@ func newSaramaConfig(config *kafkaConfig) (*sarama.Config, error) {
 	k.Metadata.Retry.Max = config.Metadata.Retry.Max
 	k.Metadata.Retry.Backoff = config.Metadata.Retry.Backoff
 	k.Metadata.RefreshFrequency = config.Metadata.RefreshFreq
+	k.Metadata.Full = config.Metadata.Full
 
 	// configure producer API properties
 	if config.MaxMessageBytes != nil {
@@ -187,16 +230,20 @@ func newSaramaConfig(config *kafkaConfig) (*sarama.Config, error) {
 	// configure per broker go channel buffering
 	k.ChannelBufferSize = config.ChanBufferSize
 
+	// configure bulk size
+	k.Producer.Flush.MaxMessages = config.BulkMaxSize
+	if config.BulkFlushFrequency > 0 {
+		k.Producer.Flush.Frequency = config.BulkFlushFrequency
+	}
+
 	// configure client ID
 	k.ClientID = config.ClientID
 
-	version, ok := kafkaVersions[config.Version]
+	version, ok := config.Version.Get()
 	if !ok {
 		return nil, fmt.Errorf("Unknown/unsupported kafka version: %v", config.Version)
 	}
 	k.Version = version
-
-	k.MetricRegistry = kafkaMetricsRegistry()
 
 	k.Producer.Partitioner = partitioner
 	k.MetricRegistry = adapter.GetGoMetrics(
@@ -208,7 +255,7 @@ func newSaramaConfig(config *kafkaConfig) (*sarama.Config, error) {
 	)
 
 	if err := k.Validate(); err != nil {
-		logp.Err("Invalid kafka configuration: %v", err)
+		log.Errorf("Invalid kafka configuration: %+v", err)
 		return nil, err
 	}
 	return k, nil

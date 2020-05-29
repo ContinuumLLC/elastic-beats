@@ -19,26 +19,17 @@ package kafka
 
 import (
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/Shopify/sarama"
-	gometrics "github.com/rcrowley/go-metrics"
 
-	"github.com/elastic/beats/libbeat/beat"
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/outputs"
-	"github.com/elastic/beats/libbeat/outputs/codec"
-	"github.com/elastic/beats/libbeat/outputs/outil"
+	"github.com/elastic/beats/v7/libbeat/beat"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/outputs"
+	"github.com/elastic/beats/v7/libbeat/outputs/codec"
+	"github.com/elastic/beats/v7/libbeat/outputs/outil"
 )
-
-type kafka struct {
-	config kafkaConfig
-	topic  outil.Selector
-
-	partitioner sarama.PartitionerConstructor
-}
 
 const (
 	defaultWaitRetry = 1 * time.Second
@@ -46,12 +37,9 @@ const (
 	// NOTE: maxWaitRetry has no effect on mode, as logstash client currently does
 	// not return ErrTempBulkFailure
 	defaultMaxWaitRetry = 60 * time.Second
+
+	logSelector = "kafka"
 )
-
-var kafkaMetricsOnce sync.Once
-var kafkaMetricsRegistryInstance gometrics.Registry
-
-var debugf = logp.MakeDebug("kafka")
 
 var (
 	errNoTopicSet = errors.New("No topic configured")
@@ -59,32 +47,22 @@ var (
 )
 
 func init() {
-	sarama.Logger = kafkaLogger{}
-
-	reg := gometrics.NewPrefixedRegistry("libbeat.kafka.")
-
-	// Note: registers /debug/metrics handler for displaying all expvar counters
-	// TODO: enable
-	//exp.Exp(reg)
-
-	kafkaMetricsRegistryInstance = reg
+	sarama.Logger = kafkaLogger{log: logp.NewLogger(logSelector)}
 
 	outputs.RegisterType("kafka", makeKafka)
 }
 
-func kafkaMetricsRegistry() gometrics.Registry {
-	return kafkaMetricsRegistryInstance
-}
-
 func makeKafka(
+	_ outputs.IndexManager,
 	beat beat.Info,
 	observer outputs.Observer,
 	cfg *common.Config,
 ) (outputs.Group, error) {
-	debugf("initialize kafka output")
+	log := logp.NewLogger(logSelector)
+	log.Debug("initialize kafka output")
 
-	config := defaultConfig()
-	if err := cfg.Unpack(&config); err != nil {
+	config, err := readConfig(cfg)
+	if err != nil {
 		return outputs.Fail(err)
 	}
 
@@ -98,7 +76,7 @@ func makeKafka(
 		return outputs.Fail(err)
 	}
 
-	libCfg, err := newSaramaConfig(&config)
+	libCfg, err := newSaramaConfig(log, config)
 	if err != nil {
 		return outputs.Fail(err)
 	}
@@ -113,7 +91,7 @@ func makeKafka(
 		return outputs.Fail(err)
 	}
 
-	client, err := newKafkaClient(observer, hosts, beat.Beat, config.Key, topic, codec, libCfg)
+	client, err := newKafkaClient(observer, hosts, beat.IndexPrefix, config.Key, topic, codec, libCfg)
 	if err != nil {
 		return outputs.Fail(err)
 	}

@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elastic/beats/libbeat/publisher/queue"
-	"github.com/elastic/beats/libbeat/publisher/queue/queuetest"
+	"github.com/elastic/beats/v7/libbeat/publisher/queue"
+	"github.com/elastic/beats/v7/libbeat/publisher/queue/queuetest"
 )
 
 var seed int64
@@ -54,9 +54,11 @@ func TestProduceConsumer(t *testing.T) {
 	testWith := func(factory queuetest.QueueFactory) func(t *testing.T) {
 		return func(t *testing.T) {
 			t.Run("single", func(t *testing.T) {
+				t.Parallel()
 				queuetest.TestSingleProducerConsumer(t, events, batchSize, factory)
 			})
 			t.Run("multi", func(t *testing.T) {
+				t.Parallel()
 				queuetest.TestMultiProducerConsumer(t, events, batchSize, factory)
 			})
 		}
@@ -72,7 +74,7 @@ func TestProducerCancelRemovesEvents(t *testing.T) {
 
 func makeTestQueue(sz, minEvents int, flushTimeout time.Duration) queuetest.QueueFactory {
 	return func(_ *testing.T) queue.Queue {
-		return NewBroker(Settings{
+		return NewQueue(nil, Settings{
 			Events:         sz,
 			FlushMinEvents: minEvents,
 			FlushTimeout:   flushTimeout,

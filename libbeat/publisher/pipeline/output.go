@@ -18,9 +18,9 @@
 package pipeline
 
 import (
-	"github.com/elastic/beats/libbeat/common/atomic"
-	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/outputs"
+	"github.com/elastic/beats/v7/libbeat/common/atomic"
+	"github.com/elastic/beats/v7/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/outputs"
 )
 
 // clientWorker manages output client of type outputs.Client, not supporting reconnect.
@@ -40,11 +40,17 @@ type netClientWorker struct {
 
 	batchSize  int
 	batchSizer func() int
+	logger     *logp.Logger
 }
 
 func makeClientWorker(observer outputObserver, qu workQueue, client outputs.Client) outputWorker {
 	if nc, ok := client.(outputs.NetworkClient); ok {
-		c := &netClientWorker{observer: observer, qu: qu, client: nc}
+		c := &netClientWorker{
+			observer: observer,
+			qu:       qu,
+			client:   nc,
+			logger:   logp.NewLogger("publisher_pipeline_output"),
+		}
 		go c.run()
 		return c
 	}
@@ -77,21 +83,33 @@ func (w *netClientWorker) Close() error {
 
 func (w *netClientWorker) run() {
 	for !w.closed.Load() {
+		reconnectAttempts := 0
+
 		// start initial connect loop from first batch, but return
 		// batch to pipeline for other outputs to catch up while we're trying to connect
 		for batch := range w.qu {
 			batch.Cancelled()
 
 			if w.closed.Load() {
+				w.logger.Infof("Closed connection to %v", w.client)
 				return
+			}
+
+			if reconnectAttempts > 0 {
+				w.logger.Infof("Attempting to reconnect to %v with %d reconnect attempt(s)", w.client, reconnectAttempts)
+			} else {
+				w.logger.Infof("Connecting to %v", w.client)
 			}
 
 			err := w.client.Connect()
 			if err != nil {
-				logp.Err("Failed to connect: %v", err)
+				w.logger.Errorf("Failed to connect to %v: %v", w.client, err)
+				reconnectAttempts++
 				continue
 			}
 
+			w.logger.Infof("Connection to %v established", w.client)
+			reconnectAttempts = 0
 			break
 		}
 
@@ -106,7 +124,7 @@ func (w *netClientWorker) run() {
 
 			err := w.client.Publish(batch)
 			if err != nil {
-				logp.Err("Failed to publish events: %v", err)
+				w.logger.Errorf("Failed to publish events: %v", err)
 				// on error return to connect loop
 				break
 			}

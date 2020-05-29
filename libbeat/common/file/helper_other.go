@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// +build !windows
+// +build !aix,!windows
 
 package file
 
@@ -40,7 +40,6 @@ func SafeFileRotate(path, tempfile string) error {
 		return nil // ignore error
 	}
 	defer f.Close()
-	f.Sync()
 
-	return nil
+	return f.Sync()
 }

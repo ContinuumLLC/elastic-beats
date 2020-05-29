@@ -25,11 +25,13 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 var debug bool
 var printLog bool
+
+var muStderr sync.Mutex
 
 type TestLogger struct {
 	t *testing.T
@@ -49,8 +51,15 @@ func (w *testLogWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func withLogOutput(fn func(*testing.T)) func(*testing.T) {
+func withOptLogOutput(capture bool, fn func(*testing.T)) func(*testing.T) {
+	if !capture {
+		return fn
+	}
+
 	return func(t *testing.T) {
+		// ensure we have only one active test if we capture stderr
+		muStderr.Lock()
+		defer muStderr.Unlock()
 
 		stderr := os.Stderr
 		r, w, err := os.Pipe()

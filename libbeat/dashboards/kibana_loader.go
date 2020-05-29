@@ -25,9 +25,12 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/kibana"
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/joeshaw/multierror"
+	"github.com/pkg/errors"
+
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/kibana"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 var importAPI = "/api/kibana/dashboards/import"
@@ -35,11 +38,12 @@ var importAPI = "/api/kibana/dashboards/import"
 type KibanaLoader struct {
 	client       *kibana.Client
 	config       *Config
-	version      string
+	version      common.Version
 	hostname     string
 	msgOutputter MessageOutputter
 }
 
+// NewKibanaLoader creates a new loader to load Kibana files
 func NewKibanaLoader(ctx context.Context, cfg *common.Config, dashboardsConfig *Config, hostname string, msgOutputter MessageOutputter) (*KibanaLoader, error) {
 
 	if cfg == nil || !cfg.Enabled() {
@@ -59,7 +63,8 @@ func NewKibanaLoader(ctx context.Context, cfg *common.Config, dashboardsConfig *
 		msgOutputter: msgOutputter,
 	}
 
-	loader.statusMsg("Initialize the Kibana %s loader", client.GetVersion())
+	version := client.GetVersion()
+	loader.statusMsg("Initialize the Kibana %s loader", version.String())
 
 	return &loader, nil
 }
@@ -80,10 +85,8 @@ func getKibanaClient(ctx context.Context, cfg *common.Config, retryCfg *Retry, r
 	return client, nil
 }
 
-func (loader KibanaLoader) ImportIndex(file string) error {
-	params := url.Values{}
-	params.Set("force", "true") //overwrite the existing dashboards
-
+// ImportIndexFile imports an index pattern from a file
+func (loader KibanaLoader) ImportIndexFile(file string) error {
 	// read json file
 	reader, err := ioutil.ReadFile(file)
 	if err != nil {
@@ -96,11 +99,26 @@ func (loader KibanaLoader) ImportIndex(file string) error {
 		return fmt.Errorf("fail to unmarshal the index content from file %s: %v", file, err)
 	}
 
-	indexContent = ReplaceIndexInIndexPattern(loader.config.Index, indexContent)
-
-	return loader.client.ImportJSON(importAPI, params, indexContent)
+	return loader.ImportIndex(indexContent)
 }
 
+// ImportIndex imports the passed index pattern to Kibana
+func (loader KibanaLoader) ImportIndex(pattern common.MapStr) error {
+	var errs multierror.Errors
+
+	params := url.Values{}
+	params.Set("force", "true") //overwrite the existing dashboards
+
+	if err := ReplaceIndexInIndexPattern(loader.config.Index, pattern); err != nil {
+		errs = append(errs, errors.Wrapf(err, "error setting index '%s' in index pattern", loader.config.Index))
+	}
+	if err := loader.client.ImportJSON(importAPI, params, pattern); err != nil {
+		errs = append(errs, errors.Wrap(err, "error loading index pattern"))
+	}
+	return errs.Err()
+}
+
+// ImportDashboard imports the dashboard file
 func (loader KibanaLoader) ImportDashboard(file string) error {
 	params := url.Values{}
 	params.Set("force", "true")            //overwrite the existing dashboards

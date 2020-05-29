@@ -22,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 func TestNOTCondition(t *testing.T) {
@@ -39,9 +39,6 @@ func TestNOTCondition(t *testing.T) {
 	}
 
 	conds := GetConditions(t, configs)
-	for _, cond := range conds {
-		logp.Debug("test", "%s", cond)
-	}
 
 	assert.False(t, conds[0].Check(httpResponseTestEvent))
 }

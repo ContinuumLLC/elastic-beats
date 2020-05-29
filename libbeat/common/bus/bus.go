@@ -20,8 +20,8 @@ package bus
 import (
 	"sync"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/v7/libbeat/common"
+	"github.com/elastic/beats/v7/libbeat/logp"
 )
 
 // Event sent to the bus
@@ -47,8 +47,9 @@ type Listener interface {
 
 type bus struct {
 	sync.RWMutex
-	name      string
+	log       *logp.Logger
 	listeners []*listener
+	store     chan Event
 }
 
 type listener struct {
@@ -58,18 +59,54 @@ type listener struct {
 }
 
 // New initializes a new bus with the given name and returns it
-func New(name string) Bus {
+func New(log *logp.Logger, name string) Bus {
 	return &bus{
-		name:      name,
+		log:       createLogger(log, name),
 		listeners: make([]*listener, 0),
 	}
+}
+
+// NewBusWithStore allows to create a buffered bus when producers send data without
+// listeners being subscribed to them. size determines the size of the buffer.
+func NewBusWithStore(log *logp.Logger, name string, size int) Bus {
+	return &bus{
+		log:       createLogger(log, name),
+		listeners: make([]*listener, 0),
+		store:     make(chan Event, size),
+	}
+}
+
+func createLogger(log *logp.Logger, name string) *logp.Logger {
+	selector := "bus-" + name
+	return log.Named(selector).With("libbeat.bus", name)
 }
 
 func (b *bus) Publish(e Event) {
 	b.RLock()
 	defer b.RUnlock()
 
-	logp.Debug("bus", "%s: %+v", b.name, e)
+	b.log.Debugf("%+v", e)
+	if len(b.listeners) == 0 && b.store != nil {
+		b.store <- e
+		return
+	}
+
+	if b.store != nil && len(b.store) != 0 {
+		doBreak := false
+		for !doBreak {
+			select {
+			case eve := <-b.store:
+				for _, listener := range b.listeners {
+					if listener.interested(eve) {
+						listener.channel <- eve
+					}
+				}
+			default:
+				doBreak = true
+			}
+		}
+	}
+
 	for _, listener := range b.listeners {
 		if listener.interested(e) {
 			listener.channel <- e

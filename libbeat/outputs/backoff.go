@@ -21,22 +21,22 @@ import (
 	"errors"
 	"time"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/publisher"
-	"github.com/elastic/beats/libbeat/testing"
+	"github.com/elastic/beats/v7/libbeat/common/backoff"
+	"github.com/elastic/beats/v7/libbeat/publisher"
+	"github.com/elastic/beats/v7/libbeat/testing"
 )
 
 type backoffClient struct {
 	client NetworkClient
 
 	done    chan struct{}
-	backoff *common.Backoff
+	backoff backoff.Backoff
 }
 
 // WithBackoff wraps a NetworkClient, adding exponential backoff support to a network client if connection/publishing failed.
 func WithBackoff(client NetworkClient, init, max time.Duration) NetworkClient {
 	done := make(chan struct{})
-	backoff := common.NewBackoff(done, init, max)
+	backoff := backoff.NewEqualJitterBackoff(done, init, max)
 	return &backoffClient{
 		client:  client,
 		done:    done,
@@ -46,7 +46,7 @@ func WithBackoff(client NetworkClient, init, max time.Duration) NetworkClient {
 
 func (b *backoffClient) Connect() error {
 	err := b.client.Connect()
-	b.backoff.WaitOnError(err)
+	backoff.WaitOnError(b.backoff, err)
 	return err
 }
 
@@ -61,7 +61,7 @@ func (b *backoffClient) Publish(batch publisher.Batch) error {
 	if err != nil {
 		b.client.Close()
 	}
-	b.backoff.WaitOnError(err)
+	backoff.WaitOnError(b.backoff, err)
 	return err
 }
 
@@ -76,4 +76,8 @@ func (b *backoffClient) Test(d testing.Driver) {
 	}
 
 	c.Test(d)
+}
+
+func (b *backoffClient) String() string {
+	return "backoff(" + b.client.String() + ")"
 }
